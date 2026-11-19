@@ -1,0 +1,6 @@
+{
+  "name": "AutoApply AI - Job Search & Application Agent",
+  "description": "Autonomous AI agent that searches scheduled jobs on Indeed & web boards, discovers company career pages, tailors CVs & cover letters to job descriptions, and automates applications.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
