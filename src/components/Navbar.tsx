@@ -1,129 +1,251 @@
 import React from 'react';
-import { 
-  Bot, 
-  Search, 
-  FileText, 
-  UserCheck, 
-  Sliders, 
-  Github, 
-  Play, 
-  Clock, 
-  Sparkles,
-  CheckCircle2,
-  RefreshCw
+import {
+  LayoutDashboard,
+  Search,
+  FileText,
+  User,
+  SlidersHorizontal,
+  Play,
+  Menu,
+  X,
+  RefreshCw,
+  Sun,
+  Moon,
 } from 'lucide-react';
-import { ScheduleConfig } from '../types';
+import { ScheduleConfig, UserProfile, LlmProviderConfig } from '../types';
 
 interface NavbarProps {
   activeTab: string;
   setActiveTab: (tab: string) => void;
-  scheduleConfig: ScheduleConfig;
+  scheduleConfig?: ScheduleConfig;
+  userProfile?: UserProfile;
+  llmConfig?: LlmProviderConfig;
   isAgentRunning: boolean;
   onRunAgent: () => void;
+  onOpenMobile?: () => void;
+  theme?: 'light' | 'dark';
+  onToggleTheme?: () => void;
 }
+
+const NAV_ITEMS = [
+  { id: 'dashboard', label: 'Overview', icon: LayoutDashboard },
+  { id: 'search', label: 'Job Search', icon: Search },
+  { id: 'applications', label: 'Applications', icon: FileText },
+  { id: 'profile', label: 'Candidate CV', icon: User },
+  { id: 'settings', label: 'Settings', icon: SlidersHorizontal },
+];
+
+export const SidebarNav: React.FC<{
+  activeTab: string;
+  setActiveTab: (tab: string) => void;
+  scheduleConfig: ScheduleConfig;
+  userProfile: UserProfile;
+  llmConfig?: LlmProviderConfig;
+  mobileOpen: boolean;
+  onCloseMobile: () => void;
+}> = ({ activeTab, setActiveTab, scheduleConfig, userProfile, llmConfig, mobileOpen, onCloseMobile }) => {
+  const handleSelectTab = (tabId: string) => {
+    setActiveTab(tabId);
+    onCloseMobile();
+  };
+
+  const sidebarContent = (
+    <div className="flex flex-col h-full w-64 bg-white dark:bg-zinc-900 border-r border-zinc-200 dark:border-zinc-800 select-none">
+      {/* Brand Wordmark */}
+      <div className="h-16 px-5 flex items-center justify-between border-b border-zinc-200 dark:border-zinc-800 shrink-0">
+        <button
+          type="button"
+          onClick={() => handleSelectTab('dashboard')}
+          className="inline-flex items-center gap-2.5 text-left whitespace-nowrap shrink-0 group"
+        >
+          <span className="w-8 h-8 rounded-lg bg-blue-600 text-white font-display font-bold text-sm flex items-center justify-center shadow-xs group-hover:bg-blue-700 transition-colors">
+            A
+          </span>
+          <span className="font-display font-bold text-lg tracking-tight text-zinc-950 dark:text-zinc-50">
+            AutoApply
+          </span>
+        </button>
+
+        <button
+          type="button"
+          onClick={onCloseMobile}
+          aria-label="Close navigation menu"
+          className="lg:hidden inline-flex items-center justify-center w-9 h-9 rounded-xl border border-zinc-200 dark:border-zinc-800 text-zinc-600 dark:text-zinc-300 hover:bg-zinc-100 dark:hover:bg-zinc-800"
+        >
+          <X className="w-4 h-4" />
+        </button>
+      </div>
+
+      {/* Primary Sidebar Navigation */}
+      <nav aria-label="Primary Navigation" className="flex-1 px-4 py-5 space-y-1.5 overflow-y-auto">
+        {NAV_ITEMS.map((item) => {
+          const Icon = item.icon;
+          const isActive = activeTab === item.id;
+          return (
+            <button
+              key={item.id}
+              type="button"
+              onClick={() => handleSelectTab(item.id)}
+              className={`w-full flex items-center gap-3 px-3.5 py-2.5 rounded-xl text-sm font-medium transition-all whitespace-nowrap ${
+                isActive
+                  ? 'bg-zinc-900 dark:bg-zinc-100 text-white dark:text-zinc-950 font-semibold shadow-xs'
+                  : 'text-zinc-700 dark:text-zinc-300 hover:text-zinc-950 dark:hover:text-white hover:bg-zinc-100 dark:hover:bg-zinc-800/80'
+              }`}
+            >
+              <Icon
+                className={`w-4 h-4 shrink-0 ${
+                  isActive ? 'text-blue-400 dark:text-blue-600' : 'text-zinc-400 dark:text-zinc-500'
+                }`}
+              />
+              <span className="truncate">{item.label}</span>
+            </button>
+          );
+        })}
+      </nav>
+
+      {/* Sidebar Workspace Footer */}
+      <div className="p-4 border-t border-zinc-200 dark:border-zinc-800 space-y-3 shrink-0">
+        {llmConfig && (
+          <button
+            type="button"
+            onClick={() => handleSelectTab('settings')}
+            className="w-full text-left px-3 py-2 rounded-xl border border-zinc-200 dark:border-zinc-800 bg-zinc-50 dark:bg-zinc-950 hover:border-blue-500 transition-colors"
+            title="Change AI provider or model"
+          >
+            <div className="text-[11px] font-medium text-zinc-500 dark:text-zinc-400">Active Model</div>
+            <div className="font-mono text-xs font-semibold text-zinc-900 dark:text-zinc-100 truncate">
+              {llmConfig.provider} · {llmConfig.model}
+            </div>
+          </button>
+        )}
+
+        <div className="px-1 text-xs text-zinc-500 dark:text-zinc-400 tabular-nums">
+          {scheduleConfig.enabled
+            ? `Schedule · ${scheduleConfig.runTime} (${scheduleConfig.maxAppsPerRun}/run)`
+            : 'Schedule · Paused'}
+        </div>
+
+        <button
+          type="button"
+          onClick={() => handleSelectTab('profile')}
+          className="w-full text-left px-3 py-2.5 rounded-xl border border-zinc-200 dark:border-zinc-800 hover:border-blue-500 hover:bg-zinc-50 dark:hover:bg-zinc-800/50 transition-colors group"
+        >
+          <div className="text-sm font-semibold text-zinc-950 dark:text-zinc-100 group-hover:text-blue-600 dark:group-hover:text-blue-400 truncate">
+            {userProfile.fullName}
+          </div>
+          <div className="text-xs text-zinc-500 dark:text-zinc-400 truncate">{userProfile.email}</div>
+        </button>
+      </div>
+    </div>
+  );
+
+  return (
+    <>
+      {/* Desktop Sticky Full-Height Sidebar */}
+      <aside className="hidden lg:block shrink-0">
+        <div className="sticky top-0 h-screen">{sidebarContent}</div>
+      </aside>
+
+      {/* Mobile Slide-Over Sidebar */}
+      {mobileOpen && (
+        <div className="fixed inset-0 z-50 lg:hidden flex">
+          <div className="fixed inset-0 bg-zinc-950/50 backdrop-blur-[1px]" onClick={onCloseMobile} />
+          <div className="relative z-10 h-full">{sidebarContent}</div>
+        </div>
+      )}
+    </>
+  );
+};
 
 export const Navbar: React.FC<NavbarProps> = ({
   activeTab,
   setActiveTab,
-  scheduleConfig,
   isAgentRunning,
-  onRunAgent
+  onRunAgent,
+  onOpenMobile,
+  theme = 'light',
+  onToggleTheme,
 }) => {
-  const navItems = [
-    { id: 'dashboard', label: 'Agent Dashboard', icon: Bot },
-    { id: 'search', label: 'Job Match Engine', icon: Search },
-    { id: 'applications', label: 'Applications Log', icon: FileText },
-    { id: 'profile', label: 'Base CV & Profile', icon: UserCheck },
-    { id: 'settings', label: 'Schedule & Filters', icon: Sliders },
-    { id: 'github_tools', label: 'GitHub Open-Source Hub', icon: Github },
-  ];
+  const currentNav = NAV_ITEMS.find((i) => i.id === activeTab) || NAV_ITEMS[0];
 
   return (
-    <header className="sticky top-0 z-50 bg-slate-900/95 backdrop-blur-md border-b border-slate-800 text-slate-100 shadow-lg">
-      <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
-        <div className="flex items-center justify-between h-16">
-          
-          {/* Logo & Agent Identity */}
-          <div className="flex items-center space-x-3 cursor-pointer" onClick={() => setActiveTab('dashboard')}>
-            <div className="w-10 h-10 rounded-xl bg-gradient-to-tr from-indigo-600 via-blue-500 to-cyan-400 p-0.5 shadow-md shadow-indigo-500/20">
-              <div className="w-full h-full bg-slate-950 rounded-[10px] flex items-center justify-center">
-                <Bot className="w-5 h-5 text-cyan-400 animate-pulse" />
-              </div>
-            </div>
-            <div>
-              <div className="flex items-center space-x-2">
-                <span className="font-bold text-lg tracking-tight bg-gradient-to-r from-white via-slate-100 to-indigo-200 bg-clip-text text-transparent">
-                  AutoApply AI
-                </span>
-                <span className="px-2 py-0.5 text-[10px] font-semibold bg-indigo-500/20 text-indigo-300 border border-indigo-500/30 rounded-full">
-                  Autonomous Agent
-                </span>
-              </div>
-              <p className="text-xs text-slate-400 font-medium">
-                Indeed & Career Portal Automation
-              </p>
-            </div>
-          </div>
+    <header className="sticky top-0 z-30 h-16 bg-white/95 dark:bg-zinc-900/95 backdrop-blur-md border-b border-zinc-200 dark:border-zinc-800 px-5 sm:px-8 lg:px-10 flex items-center justify-between gap-4 shrink-0">
+      <div className="flex items-center gap-3 min-w-0">
+        <button
+          type="button"
+          onClick={onOpenMobile}
+          aria-label="Open navigation menu"
+          className="lg:hidden inline-flex items-center justify-center w-10 h-10 -ml-2 rounded-xl border border-zinc-200 dark:border-zinc-800 text-zinc-700 dark:text-zinc-200 hover:bg-zinc-100 dark:hover:bg-zinc-800 transition-colors"
+        >
+          <Menu className="w-5 h-5" />
+        </button>
 
-          {/* Schedule Status & Primary Run Action */}
-          <div className="hidden md:flex items-center space-x-4">
-            <div className="flex items-center space-x-2 px-3 py-1.5 rounded-lg bg-slate-800/80 border border-slate-700/60 text-xs">
-              <Clock className="w-3.5 h-3.5 text-cyan-400" />
-              <span className="text-slate-300 font-medium">Schedule:</span>
-              <span className="text-emerald-400 font-semibold flex items-center gap-1">
-                <CheckCircle2 className="w-3 h-3" />
-                {scheduleConfig.enabled ? `Daily at ${scheduleConfig.runTime}` : 'Paused'}
-              </span>
-              <span className="text-slate-500">|</span>
-              <span className="text-slate-400">{scheduleConfig.maxAppsPerRun} apps/run</span>
-            </div>
+        <button
+          type="button"
+          onClick={() => setActiveTab('dashboard')}
+          className="lg:hidden font-display font-bold text-lg tracking-tight text-zinc-950 dark:text-zinc-50 whitespace-nowrap"
+        >
+          AutoApply
+        </button>
 
-            <button
-              onClick={onRunAgent}
-              disabled={isAgentRunning}
-              className={`flex items-center space-x-2 px-4 py-2 rounded-lg text-xs font-semibold shadow-md transition-all duration-200 ${
-                isAgentRunning
-                  ? 'bg-indigo-600/50 text-indigo-200 cursor-not-allowed border border-indigo-500/40'
-                  : 'bg-gradient-to-r from-indigo-600 to-blue-600 hover:from-indigo-500 hover:to-blue-500 text-white shadow-indigo-600/30 active:scale-95'
-              }`}
-            >
-              {isAgentRunning ? (
-                <>
-                  <RefreshCw className="w-3.5 h-3.5 animate-spin text-cyan-300" />
-                  <span>Agent Executing...</span>
-                </>
-              ) : (
-                <>
-                  <Play className="w-3.5 h-3.5 fill-current" />
-                  <span>Run Agent Now</span>
-                  <Sparkles className="w-3.5 h-3.5 text-amber-300" />
-                </>
-              )}
-            </button>
-          </div>
+        <span className="lg:hidden text-zinc-300 dark:text-zinc-700">/</span>
+
+        <div className="flex items-center gap-2 text-sm min-w-0">
+          <span className="hidden lg:inline text-zinc-400 dark:text-zinc-500 font-medium whitespace-nowrap">
+            Workspace
+          </span>
+          <span className="hidden lg:inline text-zinc-300 dark:text-zinc-700">/</span>
+          <span className="font-display font-semibold text-base text-zinc-950 dark:text-zinc-50 truncate">
+            {currentNav.label}
+          </span>
         </div>
+      </div>
 
-        {/* Tab Navigation */}
-        <nav className="flex space-x-1 overflow-x-auto no-scrollbar py-2 border-t border-slate-800/80">
-          {navItems.map((item) => {
-            const Icon = item.icon;
-            const isActive = activeTab === item.id;
-            return (
-              <button
-                key={item.id}
-                onClick={() => setActiveTab(item.id)}
-                className={`flex items-center space-x-2 px-3.5 py-2 rounded-lg text-xs font-medium whitespace-nowrap transition-all duration-150 ${
-                  isActive
-                    ? 'bg-indigo-600/20 text-indigo-300 border border-indigo-500/40 shadow-sm'
-                    : 'text-slate-400 hover:text-slate-200 hover:bg-slate-800/50'
-                }`}
-              >
-                <Icon className={`w-4 h-4 ${isActive ? 'text-indigo-400' : 'text-slate-400'}`} />
-                <span>{item.label}</span>
-              </button>
-            );
-          })}
-        </nav>
+      <div className="flex items-center gap-2.5 shrink-0">
+        {onToggleTheme && (
+          <button
+            type="button"
+            onClick={onToggleTheme}
+            aria-label={theme === 'dark' ? 'Switch to light mode' : 'Switch to dark mode'}
+            title={theme === 'dark' ? 'Switch to light mode' : 'Switch to dark mode'}
+            className="inline-flex items-center gap-2 px-3.5 py-2 rounded-xl text-sm font-medium bg-white dark:bg-zinc-800 text-zinc-800 dark:text-zinc-100 border border-zinc-300 dark:border-zinc-700 hover:bg-zinc-50 dark:hover:bg-zinc-700 hover:border-zinc-400 dark:hover:border-zinc-600 shadow-2xs transition-colors whitespace-nowrap shrink-0"
+          >
+            {theme === 'dark' ? (
+              <>
+                <Sun className="w-4 h-4 text-amber-400" />
+                <span className="hidden sm:inline">Light</span>
+              </>
+            ) : (
+              <>
+                <Moon className="w-4 h-4 text-zinc-600" />
+                <span className="hidden sm:inline">Dark</span>
+              </>
+            )}
+          </button>
+        )}
+
+        <button
+          type="button"
+          onClick={onRunAgent}
+          disabled={isAgentRunning}
+          className={`inline-flex items-center gap-2 px-4 sm:px-5 py-2.5 rounded-xl text-sm font-semibold transition-all whitespace-nowrap shrink-0 ${
+            isAgentRunning
+              ? 'bg-zinc-100 dark:bg-zinc-800 text-zinc-500 dark:text-zinc-400 border border-zinc-200 dark:border-zinc-700 cursor-not-allowed'
+              : 'bg-blue-600 hover:bg-blue-700 text-white shadow-sm active:scale-[0.98]'
+          }`}
+        >
+          {isAgentRunning ? (
+            <>
+              <RefreshCw className="w-4 h-4 animate-spin" />
+              <span>Preparing...</span>
+            </>
+          ) : (
+            <>
+              <Play className="w-3.5 h-3.5 fill-current" />
+              <span>Run Pipeline</span>
+            </>
+          )}
+        </button>
       </div>
     </header>
   );

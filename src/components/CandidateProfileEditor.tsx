@@ -1,180 +1,148 @@
-import React, { useState, useRef } from 'react';
-import { 
-  UserCheck, 
-  Save, 
-  FileText, 
-  Sparkles, 
-  Plus, 
-  Trash2, 
-  CheckCircle2, 
-  Briefcase, 
-  GraduationCap, 
-  Code, 
-  FolderGit2, 
-  ShieldCheck,
+import React, { useState, useRef, useEffect } from 'react';
+import {
+  Save,
+  Sparkles,
+  Trash2,
+  Check,
   RefreshCw,
   Upload,
-  FileCheck,
-  AlertCircle,
-  FileCode,
-  Check
+  RotateCcw,
+  X,
 } from 'lucide-react';
-import { UserProfile, UploadedCVFile } from '../types';
+import { UserProfile, ExperienceLevel, LlmProviderConfig } from '../types';
+import { uploadAndParseCVFile } from '../utils/cvUpload';
 
 interface CandidateProfileEditorProps {
   userProfile: UserProfile;
+  llmConfig?: LlmProviderConfig;
   onSaveProfile: (updatedProfile: UserProfile) => void;
+  onResetDemoData?: () => void;
 }
 
 export const CandidateProfileEditor: React.FC<CandidateProfileEditorProps> = ({
   userProfile,
-  onSaveProfile
+  llmConfig,
+  onSaveProfile,
+  onResetDemoData,
 }) => {
   const [profile, setProfile] = useState<UserProfile>(userProfile);
   const [isSaved, setIsSaved] = useState(false);
   const [newSkillInput, setNewSkillInput] = useState('');
+  const [newTitleInput, setNewTitleInput] = useState('');
   const [aiFeedback, setAiFeedback] = useState<string | null>(null);
   const [isAnalyzing, setIsAnalyzing] = useState(false);
 
-  // CV Upload States
   const [isUploadingCV, setIsUploadingCV] = useState(false);
-  const [uploadMessage, setUploadMessage] = useState<string | null>(null);
+  const [isDraggingFile, setIsDraggingFile] = useState(false);
+  const [uploadMessage, setUploadMessage] = useState<{ text: string; isError: boolean } | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
+  useEffect(() => {
+    setProfile(userProfile);
+  }, [userProfile]);
+
   const handleChange = (field: keyof UserProfile, value: any) => {
-    setProfile(prev => ({ ...prev, [field]: value }));
+    setProfile((prev) => ({ ...prev, [field]: value }));
     setIsSaved(false);
   };
 
   const handleAddSkill = () => {
     if (newSkillInput.trim() && !profile.skills.includes(newSkillInput.trim())) {
-      setProfile(prev => ({ ...prev, skills: [...prev.skills, newSkillInput.trim()] }));
+      setProfile((prev) => ({ ...prev, skills: [...prev.skills, newSkillInput.trim()] }));
       setNewSkillInput('');
       setIsSaved(false);
     }
   };
 
   const handleRemoveSkill = (skillToRemove: string) => {
-    setProfile(prev => ({ ...prev, skills: prev.skills.filter(s => s !== skillToRemove) }));
+    setProfile((prev) => ({ ...prev, skills: prev.skills.filter((s) => s !== skillToRemove) }));
+    setIsSaved(false);
+  };
+
+  const handleAddTargetTitle = () => {
+    const val = newTitleInput.trim();
+    const current = profile.targetJobTitles || [];
+    if (val && !current.includes(val)) {
+      setProfile((prev) => ({ ...prev, targetJobTitles: [...current, val] }));
+      setNewTitleInput('');
+      setIsSaved(false);
+    }
+  };
+
+  const handleRemoveTargetTitle = (titleToRemove: string) => {
+    const current = profile.targetJobTitles || [];
+    setProfile((prev) => ({ ...prev, targetJobTitles: current.filter((t) => t !== titleToRemove) }));
     setIsSaved(false);
   };
 
   const handleSave = () => {
-    onSaveProfile(profile);
+    const cleanedProfile: UserProfile = {
+      ...profile,
+      id: profile.id === 'usr_demo_1' ? `usr_${Date.now()}` : profile.id,
+    };
+    setProfile(cleanedProfile);
+    onSaveProfile(cleanedProfile);
     setIsSaved(true);
     setTimeout(() => setIsSaved(false), 3000);
   };
 
-  // CV Upload Handler
-  const handleCVFileUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
-    if (!file) return;
-
+  const processCVFile = async (file: File) => {
     setIsUploadingCV(true);
-    setUploadMessage(`Reading and analyzing "${file.name}" with Gemini ATS AI...`);
+    setUploadMessage({ text: `Parsing "${file.name}"...`, isError: false });
 
     try {
-      let fileTextContent = '';
-      let fileBase64 = '';
-      const mimeType = file.type || 'application/pdf';
+      const updatedProfile = await uploadAndParseCVFile(file, profile, llmConfig);
+      setProfile(updatedProfile);
+      onSaveProfile(updatedProfile);
 
-      if (file.type.includes('text') || file.name.endsWith('.md') || file.name.endsWith('.txt')) {
-        fileTextContent = await file.text();
-      } else {
-        // Read binary/pdf file as Base64 Data URL
-        fileBase64 = await new Promise<string>((resolve, reject) => {
-          const reader = new FileReader();
-          reader.onload = () => resolve(reader.result as string);
-          reader.onerror = reject;
-          reader.readAsDataURL(file);
-        });
-      }
-
-      const res = await fetch('/api/agent/parse-cv-file', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          fileName: file.name,
-          fileTextContent,
-          fileBase64,
-          mimeType
-        })
+      setUploadMessage({
+        text: `Imported profile fields and Markdown CV from "${file.name}".`,
+        isError: false,
       });
-
-      const data = await res.json();
-
-      if (data.success && data.parsedProfile) {
-        const parsed = data.parsedProfile;
-
-        // Create new UploadedCVFile record
-        const newFileRecord: UploadedCVFile = {
-          id: `cv_${Date.now()}`,
-          fileName: file.name,
-          fileSize: `${(file.size / 1024).toFixed(0)} KB`,
-          uploadedAt: new Date().toLocaleDateString(),
-          fileType: file.name.endsWith('.pdf') ? 'pdf' : file.name.endsWith('.docx') ? 'docx' : 'txt',
-          isActive: true,
-          contentPreview: parsed.customBio || `Resume of ${parsed.fullName || file.name}`
-        };
-
-        const existingCVs = (profile.uploadedCVFiles || []).map(f => ({ ...f, isActive: false }));
-
-        const updatedProfile: UserProfile = {
-          ...profile,
-          fullName: parsed.fullName || profile.fullName,
-          email: parsed.email || profile.email,
-          phone: parsed.phone || profile.phone,
-          location: parsed.location || profile.location,
-          linkedinUrl: parsed.linkedinUrl || profile.linkedinUrl,
-          githubUrl: parsed.githubUrl || profile.githubUrl,
-          portfolioUrl: parsed.portfolioUrl || profile.portfolioUrl,
-          skills: parsed.skills && parsed.skills.length > 0 ? parsed.skills : profile.skills,
-          targetJobTitles: parsed.targetJobTitles && parsed.targetJobTitles.length > 0 ? parsed.targetJobTitles : profile.targetJobTitles,
-          experienceLevel: parsed.experienceLevel || profile.experienceLevel,
-          yearsExperience: typeof parsed.yearsExperience === 'number' ? parsed.yearsExperience : profile.yearsExperience,
-          desiredSalary: parsed.desiredSalary || profile.desiredSalary,
-          workAuthorization: parsed.workAuthorization || profile.workAuthorization,
-          workExperiences: parsed.workExperiences && parsed.workExperiences.length > 0 ? parsed.workExperiences : profile.workExperiences,
-          educationList: parsed.educationList && parsed.educationList.length > 0 ? parsed.educationList : profile.educationList,
-          projectsList: parsed.projectsList && parsed.projectsList.length > 0 ? parsed.projectsList : profile.projectsList,
-          certificationsList: parsed.certificationsList && parsed.certificationsList.length > 0 ? parsed.certificationsList : profile.certificationsList,
-          masterCV: parsed.masterCV || profile.masterCV,
-          coverLetterTemplate: parsed.coverLetterTemplate || profile.coverLetterTemplate,
-          customBio: parsed.customBio || profile.customBio,
-          uploadedCVFiles: [newFileRecord, ...existingCVs]
-        };
-
-        setProfile(updatedProfile);
-        onSaveProfile(updatedProfile);
-
-        setUploadMessage(`✅ Successfully extracted candidate data from "${file.name}"! Updated contact info, skills, work experience, education, projects, certifications, and master CV.`);
-      } else {
-        setUploadMessage('⚠️ Could not extract details automatically, but file uploaded as document record.');
-      }
     } catch (err: any) {
-      setUploadMessage(`Error parsing CV: ${err.message}`);
+      setUploadMessage({
+        text: err.message || 'Failed to parse CV file.',
+        isError: true,
+      });
     } finally {
       setIsUploadingCV(false);
       if (fileInputRef.current) fileInputRef.current.value = '';
     }
   };
 
+  const handleCVFileUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    await processCVFile(file);
+  };
+
+  const handleFileDrop = async (e: React.DragEvent<HTMLElement>) => {
+    e.preventDefault();
+    setIsDraggingFile(false);
+    const file = e.dataTransfer.files?.[0];
+    if (file) {
+      await processCVFile(file);
+    }
+  };
+
   const handleSetActiveCV = (cvId: string) => {
-    const updatedCVs = (profile.uploadedCVFiles || []).map(f => ({
+    const updatedCVs = (profile.uploadedCVFiles || []).map((f) => ({
       ...f,
-      isActive: f.id === cvId
+      isActive: f.id === cvId,
     }));
-    setProfile(prev => ({ ...prev, uploadedCVFiles: updatedCVs }));
+    setProfile((prev) => ({ ...prev, uploadedCVFiles: updatedCVs }));
   };
 
   const handleDeleteUploadedCV = (cvId: string) => {
-    const updatedCVs = (profile.uploadedCVFiles || []).filter(f => f.id !== cvId);
-    setProfile(prev => ({ ...prev, uploadedCVFiles: updatedCVs }));
+    const updatedCVs = (profile.uploadedCVFiles || []).filter((f) => f.id !== cvId);
+    setProfile((prev) => ({ ...prev, uploadedCVFiles: updatedCVs }));
   };
 
   const handleAnalyzeCV = async () => {
     setIsAnalyzing(true);
     setAiFeedback(null);
+    const benchmarkTitle = profile.targetJobTitles?.[0] || 'Software Engineer';
+
     try {
       const response = await fetch('/api/agent/tailor-resume', {
         method: 'POST',
@@ -182,375 +150,465 @@ export const CandidateProfileEditor: React.FC<CandidateProfileEditorProps> = ({
         body: JSON.stringify({
           userProfile: profile,
           jobListing: {
-            title: 'Junior Remote Frontend Developer',
-            company: 'Tech Benchmark',
-            description: 'Requires React, TypeScript, Node.js, Git, HTML/CSS, and strong problem solving skills for entry level fresher role.'
-          }
-        })
+            title: benchmarkTitle,
+            company: 'Industry Benchmark',
+            description: `Target role: ${benchmarkTitle}. Required skills: ${profile.skills.join(', ')}.`,
+          },
+          llmConfig,
+        }),
       });
       const data = await response.json();
-      if (data.success) {
-        setAiFeedback(`✅ Master CV Strengths Analysis:
-- Key Strengths: Strong alignment on React, TypeScript, and modern JS.
-- Fresher Positioning: Excellent project showcase with TaskPulse and DevMarket.
-- ATS Score: ${data.result.matchScore}%
-- Recommendation: Base CV is optimized for remote fresher developer postings!`);
+      if (!response.ok || !data.success || !data.result) {
+        throw new Error(data.error || 'Failed to analyze CV.');
       }
-    } catch (err) {
-      setAiFeedback('Analysis complete: Your master profile contains strong core keywords for React, TypeScript, Node.js, and SQL.');
+
+      const matched = Array.isArray(data.result.matchedKeywords)
+        ? data.result.matchedKeywords.join(', ')
+        : profile.skills.slice(0, 6).join(', ');
+
+      setAiFeedback(
+        `Benchmark (${benchmarkTitle}) · Estimated ATS Fit: ${data.result.matchScore || 88}%\nMatched Keywords: ${matched}\nNotes: ${data.result.summaryReasoning || 'Well-structured for ATS parsing.'}`
+      );
+    } catch (err: any) {
+      setAiFeedback(`Analysis Error: ${err.message}`);
     } finally {
       setIsAnalyzing(false);
     }
   };
 
   return (
-    <div className="space-y-6">
-      
-      {/* Header & Save Trigger */}
-      <div className="bg-slate-900 border border-slate-800 rounded-2xl p-6 shadow-xl flex flex-col sm:flex-row sm:items-center justify-between gap-4">
-        <div>
-          <h2 className="text-xl font-bold text-white flex items-center gap-2">
-            <UserCheck className="w-5 h-5 text-indigo-400" />
-            Master Candidate Profile & Base CV
-          </h2>
-          <p className="text-xs text-slate-400 mt-0.5">
-            This profile fuels all automated applications, ATS form responses, and AI resume tailoring.
+    <div className="space-y-8">
+      {/* Header & Save Actions */}
+      <div className="bg-white dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-800 rounded-2xl p-6 sm:p-8 flex flex-col lg:flex-row lg:items-center justify-between gap-5">
+        <div className="space-y-1">
+          <h1 className="text-2xl font-bold text-zinc-950 dark:text-zinc-50 tracking-tight">
+            Candidate Profile &amp; Base CV
+          </h1>
+          <p className="text-sm text-zinc-600 dark:text-zinc-400">
+            Stored locally in your browser. Used across job searches, ATS audits, and PDF resume exports.
           </p>
         </div>
 
-        <div className="flex items-center space-x-3">
+        <div className="flex flex-wrap items-center gap-2.5">
+          {onResetDemoData && (
+            <button
+              type="button"
+              onClick={onResetDemoData}
+              className="inline-flex items-center gap-2 px-4 py-2.5 rounded-xl text-sm font-semibold bg-white dark:bg-zinc-800 border border-zinc-300 dark:border-zinc-700 hover:bg-zinc-50 dark:hover:bg-zinc-700 text-zinc-800 dark:text-zinc-100 shadow-2xs transition-colors"
+            >
+              <RotateCcw className="w-4 h-4" />
+              <span>Reset Demo</span>
+            </button>
+          )}
+
           <button
+            type="button"
             onClick={handleAnalyzeCV}
             disabled={isAnalyzing}
-            className="px-4 py-2 rounded-xl text-xs font-semibold bg-slate-800 hover:bg-slate-700 text-indigo-300 border border-slate-700 flex items-center space-x-1.5 transition-all"
+            className="inline-flex items-center gap-2 px-4 py-2.5 rounded-xl text-sm font-semibold bg-white dark:bg-zinc-800 border border-zinc-300 dark:border-zinc-700 hover:border-blue-500 hover:bg-blue-50/50 dark:hover:bg-blue-950/30 text-zinc-800 dark:text-zinc-100 shadow-2xs transition-colors disabled:opacity-50"
           >
             {isAnalyzing ? (
-              <RefreshCw className="w-3.5 h-3.5 animate-spin text-cyan-400" />
+              <RefreshCw className="w-4 h-4 animate-spin" />
             ) : (
-              <Sparkles className="w-3.5 h-3.5 text-amber-300" />
+              <Sparkles className="w-4 h-4 text-blue-600 dark:text-blue-400" />
             )}
-            <span>Analyze CV Strengths</span>
+            <span>Analyze CV</span>
           </button>
 
           <button
+            type="button"
             onClick={handleSave}
-            className={`px-5 py-2 rounded-xl text-xs font-semibold text-white transition-all flex items-center space-x-1.5 shadow-md ${
+            className={`inline-flex items-center gap-2 px-5 py-2.5 rounded-xl text-sm font-semibold shadow-sm transition-colors ${
               isSaved
-                ? 'bg-emerald-600 border border-emerald-500'
-                : 'bg-indigo-600 hover:bg-indigo-500'
+                ? 'bg-emerald-600 text-white'
+                : 'bg-zinc-900 dark:bg-zinc-100 hover:bg-zinc-800 dark:hover:bg-white text-white dark:text-zinc-950'
             }`}
           >
-            {isSaved ? <CheckCircle2 className="w-4 h-4" /> : <Save className="w-4 h-4" />}
-            <span>{isSaved ? 'Saved Successfully!' : 'Save Master Profile'}</span>
+            {isSaved ? <Check className="w-4 h-4" /> : <Save className="w-4 h-4" />}
+            <span>{isSaved ? 'Saved' : 'Save Changes'}</span>
           </button>
         </div>
       </div>
 
-      {/* CV Document Upload Zone */}
-      <div className="bg-slate-900 border border-slate-800 rounded-2xl p-6 shadow-xl space-y-4">
-        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-b border-slate-800 pb-3">
-          <div>
-            <h3 className="font-bold text-sm text-white flex items-center gap-2">
-              <Upload className="w-4 h-4 text-cyan-400" />
-              Upload Candidate Resume / CV Document
-            </h3>
-            <p className="text-xs text-slate-400 mt-0.5">
-              Upload your PDF, Word (.docx), or Text resume. Gemini will parse and auto-populate your master profile.
+      {/* Resume Upload Panel */}
+      <section
+        onDragOver={(e) => {
+          e.preventDefault();
+          setIsDraggingFile(true);
+        }}
+        onDragLeave={() => setIsDraggingFile(false)}
+        onDrop={handleFileDrop}
+        className={`bg-white dark:bg-zinc-900 border rounded-2xl p-6 sm:p-8 space-y-5 transition-colors ${
+          isDraggingFile
+            ? 'border-blue-500 bg-blue-50/40 dark:bg-blue-950/20'
+            : 'border-zinc-200 dark:border-zinc-800'
+        }`}
+      >
+        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 border-b border-zinc-200 dark:border-zinc-800 pb-5">
+          <div className="space-y-1">
+            <h2 className="text-lg font-bold text-zinc-950 dark:text-zinc-50">Import Existing Resume</h2>
+            <p className="text-sm text-zinc-600 dark:text-zinc-400">
+              Drag &amp; drop or upload a .pdf, .docx, .txt, or .md file to auto-fill contact details, skills, and Markdown CV.
             </p>
           </div>
 
-          <div>
+          <div className="shrink-0">
             <input
               type="file"
               ref={fileInputRef}
               onChange={handleCVFileUpload}
-              accept=".pdf,.docx,.doc,.txt,.md"
+              accept=".pdf,.docx,.txt,.md"
               className="hidden"
             />
             <button
+              type="button"
               onClick={() => fileInputRef.current?.click()}
               disabled={isUploadingCV}
-              className="px-4 py-2 rounded-xl text-xs font-semibold bg-gradient-to-r from-indigo-500 to-cyan-500 hover:from-indigo-400 hover:to-cyan-400 text-white shadow-md shadow-indigo-500/20 flex items-center space-x-1.5"
+              className="inline-flex items-center gap-2 px-5 py-2.5 rounded-xl text-sm font-semibold bg-blue-600 hover:bg-blue-700 text-white shadow-sm transition-colors disabled:opacity-60"
             >
               {isUploadingCV ? (
                 <>
-                  <RefreshCw className="w-3.5 h-3.5 animate-spin text-white" />
-                  <span>Parsing CV Document...</span>
+                  <RefreshCw className="w-4 h-4 animate-spin" />
+                  <span>Parsing Resume...</span>
                 </>
               ) : (
                 <>
-                  <Upload className="w-3.5 h-3.5" />
-                  <span>Upload Resume Document</span>
+                  <Upload className="w-4 h-4" />
+                  <span>Upload Resume</span>
                 </>
               )}
             </button>
           </div>
         </div>
 
-        {/* Upload Status Banner */}
         {uploadMessage && (
-          <div className="p-3 rounded-xl bg-slate-950 border border-indigo-500/30 text-xs text-indigo-300 flex items-center justify-between">
-            <span>{uploadMessage}</span>
-            <button onClick={() => setUploadMessage(null)} className="text-slate-500 hover:text-white ml-2">
-              &times;
+          <div
+            className={`px-4 py-3 rounded-xl border text-sm flex items-center justify-between ${
+              uploadMessage.isError
+                ? 'bg-red-50 dark:bg-red-950/40 border-red-200 dark:border-red-900/70 text-red-800 dark:text-red-200'
+                : 'bg-zinc-50 dark:bg-zinc-950 border-zinc-200 dark:border-zinc-800 text-zinc-800 dark:text-zinc-200'
+            }`}
+          >
+            <span>{uploadMessage.text}</span>
+            <button
+              type="button"
+              onClick={() => setUploadMessage(null)}
+              aria-label="Dismiss upload message"
+              className="text-zinc-500 dark:text-zinc-400 hover:text-zinc-900 dark:hover:text-zinc-100 p-1 ml-2"
+            >
+              <X className="w-4 h-4" />
             </button>
           </div>
         )}
 
-        {/* Uploaded Documents List */}
         {profile.uploadedCVFiles && profile.uploadedCVFiles.length > 0 && (
-          <div className="space-y-2 pt-1">
-            <span className="text-[11px] font-bold text-slate-400 uppercase tracking-wider block">Uploaded Resume Documents ({profile.uploadedCVFiles.length})</span>
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-              {profile.uploadedCVFiles.map((doc) => (
-                <div
-                  key={doc.id}
-                  className={`p-3.5 rounded-xl border transition-all flex items-start justify-between gap-3 ${
-                    doc.isActive
-                      ? 'bg-indigo-950/40 border-indigo-500/50 shadow-md'
-                      : 'bg-slate-950 border-slate-800'
-                  }`}
-                >
-                  <div className="space-y-1">
-                    <div className="flex items-center space-x-2">
-                      <FileCheck className={`w-4 h-4 shrink-0 ${doc.isActive ? 'text-cyan-400' : 'text-slate-500'}`} />
-                      <span className="font-semibold text-xs text-white line-clamp-1">{doc.fileName}</span>
-                    </div>
-                    <div className="flex items-center space-x-2 text-[10px] text-slate-400">
-                      <span>{doc.fileSize}</span>
-                      <span>•</span>
-                      <span>Uploaded {doc.uploadedAt}</span>
-                    </div>
-                  </div>
-
-                  <div className="flex items-center space-x-2 shrink-0">
-                    {doc.isActive ? (
-                      <span className="px-2 py-0.5 rounded text-[10px] font-bold bg-emerald-500/20 text-emerald-300 border border-emerald-500/30">
-                        ACTIVE MASTER
-                      </span>
-                    ) : (
-                      <button
-                        onClick={() => handleSetActiveCV(doc.id)}
-                        className="px-2 py-0.5 rounded text-[10px] font-semibold bg-slate-800 hover:bg-slate-700 text-slate-300"
-                      >
-                        Set Active
-                      </button>
-                    )}
-
-                    <button
-                      onClick={() => handleDeleteUploadedCV(doc.id)}
-                      className="text-slate-500 hover:text-rose-400 p-1"
-                    >
-                      <Trash2 className="w-3.5 h-3.5" />
-                    </button>
+          <div className="divide-y divide-zinc-200 dark:divide-zinc-800 border border-zinc-200 dark:border-zinc-800 rounded-xl overflow-hidden">
+            {profile.uploadedCVFiles.map((doc) => (
+              <div key={doc.id} className="px-5 py-4 flex items-center justify-between gap-4 text-sm">
+                <div className="min-w-0 space-y-0.5">
+                  <div className="font-semibold text-zinc-950 dark:text-zinc-100 truncate">{doc.fileName}</div>
+                  <div className="text-xs text-zinc-500 dark:text-zinc-400 tabular-nums">
+                    {doc.fileSize} · Uploaded {doc.uploadedAt}
                   </div>
                 </div>
-              ))}
-            </div>
+                <div className="flex items-center gap-3 shrink-0">
+                  {doc.isActive ? (
+                    <span className="inline-flex items-center gap-1.5 text-sm font-semibold text-emerald-700 dark:text-emerald-400">
+                      <Check className="w-4 h-4" />
+                      <span>Active</span>
+                    </span>
+                  ) : (
+                    <button
+                      type="button"
+                      onClick={() => handleSetActiveCV(doc.id)}
+                      className="px-3.5 py-1.5 rounded-xl text-sm font-semibold bg-white dark:bg-zinc-800 border border-zinc-300 dark:border-zinc-700 hover:border-blue-500 text-blue-700 dark:text-blue-300"
+                    >
+                      Set Active
+                    </button>
+                  )}
+                  <button
+                    type="button"
+                    onClick={() => handleDeleteUploadedCV(doc.id)}
+                    aria-label="Delete uploaded file"
+                    className="p-2 rounded-xl border border-zinc-200 dark:border-zinc-700 text-zinc-500 hover:text-red-600 dark:hover:text-red-400 hover:border-red-300"
+                  >
+                    <Trash2 className="w-4 h-4" />
+                  </button>
+                </div>
+              </div>
+            ))}
           </div>
         )}
-      </div>
+      </section>
 
-      {/* AI CV Feedback Alert */}
       {aiFeedback && (
-        <div className="bg-slate-900 border border-indigo-500/40 rounded-2xl p-4 text-xs text-indigo-200 whitespace-pre-wrap leading-relaxed space-y-1 shadow-lg">
+        <div className="bg-white dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-800 rounded-2xl p-6 text-sm text-zinc-700 dark:text-zinc-300 whitespace-pre-wrap leading-relaxed">
           {aiFeedback}
         </div>
       )}
 
-      {/* Main Grid: Profile Fields & Master Resume Markdown */}
-      <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
-        
-        {/* Left Column: Form Details */}
-        <div className="lg:col-span-6 space-y-5">
-          
-          {/* Contact & Personal Info */}
-          <div className="bg-slate-900 border border-slate-800 rounded-2xl p-5 space-y-4 shadow-xl">
-            <h3 className="font-bold text-sm text-white flex items-center gap-2 border-b border-slate-800 pb-3">
-              <UserCheck className="w-4 h-4 text-indigo-400" /> Contact & Basic Details
-            </h3>
+      {/* Main Editor Grid */}
+      <div className="grid grid-cols-1 lg:grid-cols-12 gap-8">
+        <div className="lg:col-span-6 space-y-6">
+          {/* Contact & Personal */}
+          <section className="bg-white dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-800 rounded-2xl p-6 space-y-5 text-sm">
+            <h2 className="text-lg font-bold text-zinc-950 dark:text-zinc-50 border-b border-zinc-200 dark:border-zinc-800 pb-3">
+              Contact &amp; Links
+            </h2>
 
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 text-xs">
-              <div className="space-y-1">
-                <label className="text-slate-400 font-medium">Full Name</label>
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+              <div className="space-y-1.5">
+                <label className="text-zinc-700 dark:text-zinc-300 font-medium block">Full Name</label>
                 <input
                   type="text"
                   value={profile.fullName}
                   onChange={(e) => handleChange('fullName', e.target.value)}
-                  className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-2 text-slate-200 focus:outline-none focus:border-indigo-500"
+                  className="w-full bg-white dark:bg-zinc-950 border border-zinc-300 dark:border-zinc-700 rounded-xl px-3.5 py-2.5 text-sm text-zinc-900 dark:text-zinc-100 focus:outline-none focus:border-blue-500"
                 />
               </div>
-
-              <div className="space-y-1">
-                <label className="text-slate-400 font-medium">Email Address</label>
+              <div className="space-y-1.5">
+                <label className="text-zinc-700 dark:text-zinc-300 font-medium block">Email Address</label>
                 <input
                   type="email"
                   value={profile.email}
                   onChange={(e) => handleChange('email', e.target.value)}
-                  className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-2 text-slate-200 focus:outline-none focus:border-indigo-500"
+                  className="w-full bg-white dark:bg-zinc-950 border border-zinc-300 dark:border-zinc-700 rounded-xl px-3.5 py-2.5 text-sm text-zinc-900 dark:text-zinc-100 focus:outline-none focus:border-blue-500"
                 />
               </div>
-
-              <div className="space-y-1">
-                <label className="text-slate-400 font-medium">Phone Number</label>
+              <div className="space-y-1.5">
+                <label className="text-zinc-700 dark:text-zinc-300 font-medium block">Phone Number</label>
                 <input
                   type="text"
                   value={profile.phone}
                   onChange={(e) => handleChange('phone', e.target.value)}
-                  className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-2 text-slate-200 focus:outline-none focus:border-indigo-500"
+                  className="w-full bg-white dark:bg-zinc-950 border border-zinc-300 dark:border-zinc-700 rounded-xl px-3.5 py-2.5 text-sm text-zinc-900 dark:text-zinc-100 focus:outline-none focus:border-blue-500"
                 />
               </div>
-
-              <div className="space-y-1">
-                <label className="text-slate-400 font-medium">Current Location</label>
+              <div className="space-y-1.5">
+                <label className="text-zinc-700 dark:text-zinc-300 font-medium block">Location</label>
                 <input
                   type="text"
                   value={profile.location}
                   onChange={(e) => handleChange('location', e.target.value)}
-                  className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-2 text-slate-200 focus:outline-none focus:border-indigo-500"
+                  className="w-full bg-white dark:bg-zinc-950 border border-zinc-300 dark:border-zinc-700 rounded-xl px-3.5 py-2.5 text-sm text-zinc-900 dark:text-zinc-100 focus:outline-none focus:border-blue-500"
                 />
               </div>
             </div>
 
-            <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 text-xs pt-1">
-              <div className="space-y-1">
-                <label className="text-slate-400 font-medium">LinkedIn URL</label>
+            <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+              <div className="space-y-1.5">
+                <label className="text-zinc-700 dark:text-zinc-300 font-medium block">LinkedIn</label>
                 <input
                   type="text"
                   value={profile.linkedinUrl}
                   onChange={(e) => handleChange('linkedinUrl', e.target.value)}
-                  className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-2 text-slate-200 focus:outline-none focus:border-indigo-500 text-[11px]"
+                  className="w-full bg-white dark:bg-zinc-950 border border-zinc-300 dark:border-zinc-700 rounded-xl px-3.5 py-2.5 text-sm text-zinc-900 dark:text-zinc-100 focus:outline-none focus:border-blue-500"
                 />
               </div>
-
-              <div className="space-y-1">
-                <label className="text-slate-400 font-medium">GitHub URL</label>
+              <div className="space-y-1.5">
+                <label className="text-zinc-700 dark:text-zinc-300 font-medium block">GitHub</label>
                 <input
                   type="text"
                   value={profile.githubUrl}
                   onChange={(e) => handleChange('githubUrl', e.target.value)}
-                  className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-2 text-slate-200 focus:outline-none focus:border-indigo-500 text-[11px]"
+                  className="w-full bg-white dark:bg-zinc-950 border border-zinc-300 dark:border-zinc-700 rounded-xl px-3.5 py-2.5 text-sm text-zinc-900 dark:text-zinc-100 focus:outline-none focus:border-blue-500"
                 />
               </div>
-
-              <div className="space-y-1">
-                <label className="text-slate-400 font-medium">Portfolio URL</label>
+              <div className="space-y-1.5">
+                <label className="text-zinc-700 dark:text-zinc-300 font-medium block">Portfolio</label>
                 <input
                   type="text"
                   value={profile.portfolioUrl}
                   onChange={(e) => handleChange('portfolioUrl', e.target.value)}
-                  className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-2 text-slate-200 focus:outline-none focus:border-indigo-500 text-[11px]"
+                  className="w-full bg-white dark:bg-zinc-950 border border-zinc-300 dark:border-zinc-700 rounded-xl px-3.5 py-2.5 text-sm text-zinc-900 dark:text-zinc-100 focus:outline-none focus:border-blue-500"
                 />
               </div>
             </div>
-          </div>
+          </section>
 
-          {/* Work Auth & Compensation */}
-          <div className="bg-slate-900 border border-slate-800 rounded-2xl p-5 space-y-4 shadow-xl text-xs">
-            <h3 className="font-bold text-sm text-white flex items-center gap-2 border-b border-slate-800 pb-3">
-              <ShieldCheck className="w-4 h-4 text-emerald-400" /> Work Auth & ATS Form Default Answers
-            </h3>
+          {/* Role Targeting & Work Auth */}
+          <section className="bg-white dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-800 rounded-2xl p-6 space-y-5 text-sm">
+            <h2 className="text-lg font-bold text-zinc-950 dark:text-zinc-50 border-b border-zinc-200 dark:border-zinc-800 pb-3">
+              Experience &amp; ATS Defaults
+            </h2>
 
-            <div className="space-y-3">
-              <div className="space-y-1">
-                <label className="text-slate-400 font-medium">Work Authorization Status</label>
+            <div className="grid grid-cols-2 gap-4">
+              <div className="space-y-1.5">
+                <label className="text-zinc-700 dark:text-zinc-300 font-medium block">Experience Level</label>
+                <select
+                  value={profile.experienceLevel}
+                  onChange={(e) => handleChange('experienceLevel', e.target.value as ExperienceLevel)}
+                  className="w-full bg-white dark:bg-zinc-950 border border-zinc-300 dark:border-zinc-700 rounded-xl px-3.5 py-2.5 text-sm text-zinc-900 dark:text-zinc-100 focus:outline-none focus:border-blue-500"
+                >
+                  <option value="fresher">Fresher (0-1 yrs)</option>
+                  <option value="entry">Entry Level (0-2 yrs)</option>
+                  <option value="mid">Mid Level (2-5 yrs)</option>
+                  <option value="senior">Senior Level (5+ yrs)</option>
+                </select>
+              </div>
+              <div className="space-y-1.5">
+                <label className="text-zinc-700 dark:text-zinc-300 font-medium block">Years of Experience</label>
+                <input
+                  type="number"
+                  min={0}
+                  max={40}
+                  value={profile.yearsExperience}
+                  onChange={(e) => handleChange('yearsExperience', Number(e.target.value))}
+                  className="w-full bg-white dark:bg-zinc-950 border border-zinc-300 dark:border-zinc-700 rounded-xl px-3.5 py-2.5 text-sm text-zinc-900 dark:text-zinc-100 tabular-nums focus:outline-none focus:border-blue-500"
+                />
+              </div>
+            </div>
+
+            <div className="space-y-1.5">
+              <label className="text-zinc-700 dark:text-zinc-300 font-medium block">Work Authorization</label>
+              <input
+                type="text"
+                value={profile.workAuthorization}
+                onChange={(e) => handleChange('workAuthorization', e.target.value)}
+                className="w-full bg-white dark:bg-zinc-950 border border-zinc-300 dark:border-zinc-700 rounded-xl px-3.5 py-2.5 text-sm text-zinc-900 dark:text-zinc-100 focus:outline-none focus:border-blue-500"
+              />
+            </div>
+
+            <div className="grid grid-cols-2 gap-4">
+              <div className="space-y-1.5">
+                <label className="text-zinc-700 dark:text-zinc-300 font-medium block">Desired Compensation</label>
                 <input
                   type="text"
-                  value={profile.workAuthorization}
-                  onChange={(e) => handleChange('workAuthorization', e.target.value)}
-                  className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-2 text-slate-200 focus:outline-none focus:border-indigo-500"
+                  value={profile.desiredSalary}
+                  onChange={(e) => handleChange('desiredSalary', e.target.value)}
+                  className="w-full bg-white dark:bg-zinc-950 border border-zinc-300 dark:border-zinc-700 rounded-xl px-3.5 py-2.5 text-sm text-zinc-900 dark:text-zinc-100 focus:outline-none focus:border-blue-500"
                 />
               </div>
-
-              <div className="grid grid-cols-2 gap-3">
-                <div className="space-y-1">
-                  <label className="text-slate-400 font-medium">Desired Salary Expectation</label>
-                  <input
-                    type="text"
-                    value={profile.desiredSalary}
-                    onChange={(e) => handleChange('desiredSalary', e.target.value)}
-                    className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-2 text-slate-200 focus:outline-none focus:border-indigo-500"
-                  />
-                </div>
-
-                <div className="space-y-1">
-                  <label className="text-slate-400 font-medium">Notice Period / Start Date</label>
-                  <input
-                    type="text"
-                    value={profile.noticePeriod}
-                    onChange={(e) => handleChange('noticePeriod', e.target.value)}
-                    className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-2 text-slate-200 focus:outline-none focus:border-indigo-500"
-                  />
-                </div>
+              <div className="space-y-1.5">
+                <label className="text-zinc-700 dark:text-zinc-300 font-medium block">Notice Period</label>
+                <input
+                  type="text"
+                  value={profile.noticePeriod}
+                  onChange={(e) => handleChange('noticePeriod', e.target.value)}
+                  className="w-full bg-white dark:bg-zinc-950 border border-zinc-300 dark:border-zinc-700 rounded-xl px-3.5 py-2.5 text-sm text-zinc-900 dark:text-zinc-100 focus:outline-none focus:border-blue-500"
+                />
               </div>
             </div>
-          </div>
 
-          {/* Core Technical Skills Tags */}
-          <div className="bg-slate-900 border border-slate-800 rounded-2xl p-5 space-y-4 shadow-xl text-xs">
-            <h3 className="font-bold text-sm text-white flex items-center gap-2 border-b border-slate-800 pb-3">
-              <Code className="w-4 h-4 text-cyan-400" /> Core Tech Stack & Skills
-            </h3>
+            <div className="space-y-1.5">
+              <label className="text-zinc-700 dark:text-zinc-300 font-medium block">Professional Summary</label>
+              <textarea
+                rows={3}
+                value={profile.customBio}
+                onChange={(e) => handleChange('customBio', e.target.value)}
+                className="w-full bg-white dark:bg-zinc-950 border border-zinc-300 dark:border-zinc-700 rounded-xl px-3.5 py-2.5 text-sm text-zinc-900 dark:text-zinc-100 focus:outline-none focus:border-blue-500 leading-relaxed"
+              />
+            </div>
+          </section>
 
-            <div className="space-y-2">
-              <div className="flex flex-wrap gap-1.5 p-2 bg-slate-950 border border-slate-800 rounded-xl min-h-[42px]">
-                {profile.skills.map((skill) => (
-                  <span key={skill} className="inline-flex items-center space-x-1 px-2.5 py-1 rounded-md bg-slate-800 text-slate-200 border border-slate-700">
-                    <span>{skill}</span>
-                    <button onClick={() => handleRemoveSkill(skill)} className="hover:text-rose-400">
-                      &times;
+          {/* Target Job Titles & Skills */}
+          <section className="bg-white dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-800 rounded-2xl p-6 space-y-5 text-sm">
+            <h2 className="text-lg font-bold text-zinc-950 dark:text-zinc-50 border-b border-zinc-200 dark:border-zinc-800 pb-3">
+              Target Roles &amp; Skills
+            </h2>
+
+            <div className="space-y-2.5">
+              <label className="text-zinc-700 dark:text-zinc-300 font-medium block">Target Job Titles</label>
+              <div className="flex flex-wrap gap-2 p-3 bg-zinc-50 dark:bg-zinc-950 border border-zinc-300 dark:border-zinc-700 rounded-xl min-h-[44px]">
+                {(profile.targetJobTitles || []).map((title) => (
+                  <span
+                    key={title}
+                    className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-white dark:bg-zinc-800 text-zinc-900 dark:text-zinc-100 border border-zinc-200 dark:border-zinc-700 font-medium"
+                  >
+                    <span>{title}</span>
+                    <button
+                      type="button"
+                      onClick={() => handleRemoveTargetTitle(title)}
+                      aria-label={`Remove ${title}`}
+                      className="text-zinc-400 hover:text-red-600 dark:hover:text-red-400"
+                    >
+                      <X className="w-3.5 h-3.5" />
                     </button>
                   </span>
                 ))}
               </div>
-
-              <div className="flex gap-2">
+              <div className="flex gap-2.5">
                 <input
                   type="text"
-                  placeholder="Add new skill (e.g. Next.js, Docker)..."
+                  placeholder="Add target title..."
+                  value={newTitleInput}
+                  onChange={(e) => setNewTitleInput(e.target.value)}
+                  onKeyDown={(e) => e.key === 'Enter' && (e.preventDefault(), handleAddTargetTitle())}
+                  className="flex-1 bg-white dark:bg-zinc-950 border border-zinc-300 dark:border-zinc-700 rounded-xl px-3.5 py-2.5 text-sm text-zinc-900 dark:text-zinc-100 placeholder-zinc-400 focus:outline-none focus:border-blue-500"
+                />
+                <button
+                  type="button"
+                  onClick={handleAddTargetTitle}
+                  className="px-4 py-2.5 rounded-xl bg-zinc-900 dark:bg-zinc-100 hover:bg-zinc-800 dark:hover:bg-white text-white dark:text-zinc-950 font-semibold whitespace-nowrap shadow-xs"
+                >
+                  Add Title
+                </button>
+              </div>
+            </div>
+
+            <div className="space-y-2.5 pt-3 border-t border-zinc-200 dark:border-zinc-800">
+              <label className="text-zinc-700 dark:text-zinc-300 font-medium block">Core Skills</label>
+              <div className="flex flex-wrap gap-2 p-3 bg-zinc-50 dark:bg-zinc-950 border border-zinc-300 dark:border-zinc-700 rounded-xl min-h-[44px]">
+                {profile.skills.map((skill) => (
+                  <span
+                    key={skill}
+                    className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-white dark:bg-zinc-800 text-zinc-900 dark:text-zinc-100 border border-zinc-200 dark:border-zinc-700 font-medium"
+                  >
+                    <span>{skill}</span>
+                    <button
+                      type="button"
+                      onClick={() => handleRemoveSkill(skill)}
+                      aria-label={`Remove ${skill}`}
+                      className="text-zinc-400 hover:text-red-600 dark:hover:text-red-400"
+                    >
+                      <X className="w-3.5 h-3.5" />
+                    </button>
+                  </span>
+                ))}
+              </div>
+              <div className="flex gap-2.5">
+                <input
+                  type="text"
+                  placeholder="Add skill (e.g. Docker, SQL)..."
                   value={newSkillInput}
                   onChange={(e) => setNewSkillInput(e.target.value)}
                   onKeyDown={(e) => e.key === 'Enter' && (e.preventDefault(), handleAddSkill())}
-                  className="flex-1 bg-slate-950 border border-slate-800 rounded-xl px-3 py-2 text-slate-200 focus:outline-none focus:border-indigo-500"
+                  className="flex-1 bg-white dark:bg-zinc-950 border border-zinc-300 dark:border-zinc-700 rounded-xl px-3.5 py-2.5 text-sm text-zinc-900 dark:text-zinc-100 placeholder-zinc-400 focus:outline-none focus:border-blue-500"
                 />
                 <button
+                  type="button"
                   onClick={handleAddSkill}
-                  className="px-4 py-2 rounded-xl bg-indigo-600 hover:bg-indigo-500 text-white font-semibold"
+                  className="px-4 py-2.5 rounded-xl bg-zinc-900 dark:bg-zinc-100 hover:bg-zinc-800 dark:hover:bg-white text-white dark:text-zinc-950 font-semibold whitespace-nowrap shadow-xs"
                 >
                   Add Skill
                 </button>
               </div>
             </div>
-          </div>
-
+          </section>
         </div>
 
-        {/* Right Column: Base Resume Markdown Editor */}
-        <div className="lg:col-span-6 space-y-5">
-          <div className="bg-slate-900 border border-slate-800 rounded-2xl p-5 shadow-xl space-y-4 h-full flex flex-col">
-            <div className="flex items-center justify-between border-b border-slate-800 pb-3">
-              <h3 className="font-bold text-sm text-white flex items-center gap-2">
-                <FileText className="w-4 h-4 text-indigo-400" /> Master Base Resume (Markdown Format)
-              </h3>
-              <span className="text-[10px] text-slate-500 font-mono">Markdown Supported</span>
+        {/* Right Column: Master Base Resume Markdown */}
+        <div className="lg:col-span-6">
+          <section className="bg-white dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-800 rounded-2xl p-6 space-y-4 h-full flex flex-col">
+            <div className="flex items-center justify-between border-b border-zinc-200 dark:border-zinc-800 pb-3">
+              <h2 className="text-lg font-bold text-zinc-950 dark:text-zinc-50">Master Resume (Markdown)</h2>
+              <span className="text-xs font-mono text-zinc-500 dark:text-zinc-400">Plaintext / .md</span>
             </div>
 
-            <p className="text-xs text-slate-400 leading-relaxed">
-              Paste or edit your master resume here. When applying to specific jobs, Gemini uses this master CV as the foundation to re-weight bullet points and generate tailored PDFs.
+            <p className="text-sm text-zinc-600 dark:text-zinc-400 leading-relaxed">
+              This Markdown document serves as the source of truth when tailoring resumes and generating PDF exports.
             </p>
 
             <textarea
               value={profile.masterCV}
               onChange={(e) => handleChange('masterCV', e.target.value)}
-              rows={22}
-              className="w-full flex-1 bg-slate-950 border border-slate-800 rounded-xl p-4 text-xs font-mono text-slate-200 focus:outline-none focus:border-indigo-500 leading-relaxed resize-none shadow-inner"
-              placeholder="Paste your base resume in Markdown..."
+              rows={26}
+              className="w-full flex-1 bg-zinc-50 dark:bg-zinc-950 border border-zinc-300 dark:border-zinc-700 rounded-xl p-4 text-xs sm:text-sm font-mono text-zinc-900 dark:text-zinc-100 placeholder-zinc-400 focus:outline-none focus:border-blue-500 focus:bg-white dark:focus:bg-zinc-950 leading-relaxed resize-none"
+              placeholder="Paste your master resume in Markdown..."
             />
-          </div>
+          </section>
         </div>
-
       </div>
-
     </div>
   );
 };

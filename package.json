@@ -1,7 +1,18 @@
 {
-  "name": "react-example",
-  "private": true,
-  "version": "0.0.0",
+  "name": "autoapply-ai",
+  "version": "1.0.0",
+  "description": "Autonomous AI job search, ATS compatibility auditing, tailored PDF resume generation, and application tracking agent powered by Google Gemini.",
+  "license": "MIT",
+  "keywords": [
+    "ai-agent",
+    "job-search",
+    "resume-tailor",
+    "ats-optimizer",
+    "gemini-api",
+    "react",
+    "typescript",
+    "tailwindcss"
+  ],
   "type": "module",
   "scripts": {
     "dev": "tsx server.ts",
@@ -12,13 +23,14 @@
     "lint": "tsc --noEmit"
   },
   "dependencies": {
-    "@google/genai": "^2.4.0",
+    "@google/genai": "^3.6.1",
     "@tailwindcss/vite": "^4.1.14",
     "@vitejs/plugin-react": "^5.0.4",
     "dotenv": "^17.2.3",
     "express": "^4.21.2",
     "jspdf": "^4.2.1",
     "lucide-react": "^0.546.0",
+    "mammoth": "^1.13.0",
     "motion": "^12.23.24",
     "react": "^19.0.1",
     "react-dom": "^19.0.1",

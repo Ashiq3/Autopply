@@ -1,107 +1,130 @@
-import { UserProfile, ScheduleConfig, JobListing, ApplicationRecord, GitHubTool } from '../types';
+import {
+  UserProfile,
+  ScheduleConfig,
+  JobListing,
+  ApplicationRecord,
+  GitHubTool,
+  LlmProviderConfig,
+  LlmProviderMetadata,
+} from '../types';
 
 export const DEFAULT_USER_PROFILE: UserProfile = {
-  id: 'usr_1',
-  fullName: 'Ashiqur Rahman',
-  email: 'ashiqurrahman47th@gmail.com',
-  phone: '+1 (555) 382-9012',
-  location: 'Remote / Worldwide (Anywhere)',
-  linkedinUrl: 'https://linkedin.com/in/ashiqur-rahman-leadgen',
-  githubUrl: 'https://github.com/ashiqur-automation',
-  portfolioUrl: 'https://ashiqur-leadgen.dev',
-  experienceLevel: 'fresher',
-  yearsExperience: 2,
-  desiredSalary: '$50,000 - $75,000 / year',
-  workAuthorization: '100% Remote / Worldwide (No US-only residency restrictions)',
+  id: 'usr_demo_1',
+  fullName: 'Alex Morgan',
+  email: 'alex.morgan@example.com',
+  phone: '+1 (555) 014-8920',
+  location: 'Remote / Worldwide',
+  linkedinUrl: 'https://linkedin.com/in/alex-morgan-demo',
+  githubUrl: 'https://github.com/alexmorgan-dev',
+  portfolioUrl: 'https://alexmorgan.example.dev',
+  experienceLevel: 'entry',
+  yearsExperience: 1,
+  desiredSalary: '$60,000 - $85,000 / year',
+  workAuthorization: 'Authorized for Remote Global Roles',
   requiresSponsorship: false,
   noticePeriod: 'Immediately available',
   skills: [
-    'Lead Generation', 'Email Marketing', 'Mailchimp', 'Email Automation',
-    'Sheet Automation (Google Sheets / AppScript)', 'Data Entry & Mining',
-    'AI Automation', 'AI Agent Building', 'Lead & Campaign Workflow Automation',
-    'Zapier / n8n / Make.com', 'B2B Prospecting & Scraping', 'CRM Management'
+    'React',
+    'TypeScript',
+    'Node.js',
+    'Tailwind CSS',
+    'REST APIs',
+    'PostgreSQL',
+    'Git & GitHub',
+    'AI Workflow Automation'
+  ],
+  targetJobTitles: [
+    'Junior Full-Stack Developer',
+    'Frontend React Developer',
+    'Entry-Level Software Engineer',
+    'AI Automation Engineer'
   ],
   education: [
     {
       id: 'edu_1',
-      degree: 'Bachelor Degree in Business & Marketing',
-      institution: 'University of Information Technology',
-      year: '2024',
+      degree: 'B.S. in Computer Science',
+      institution: 'State University of Technology',
+      year: '2025',
       gpa: '3.8 / 4.0',
-      fieldOfStudy: 'Digital Marketing & Automation Systems'
+      fieldOfStudy: 'Software Engineering & Distributed Systems'
     }
   ],
   workHistory: [
     {
       id: 'wrk_1',
-      company: 'GrowthFlow Digital Solutions',
-      role: 'Lead Generation & Email Automation Specialist',
-      duration: 'Jan 2024 - Present (2 yrs)',
+      company: 'CloudSpark Labs',
+      role: 'Junior Software Developer Intern',
+      duration: 'Jun 2024 - May 2025',
       highlights: [
-        'Built automated B2B lead generation pipelines using Google Sheets, AppScript, and scraping APIs.',
-        'Managed end-to-end Mailchimp and cold email marketing campaigns with 45%+ open rates and automated drip sequences.',
-        'Created custom AI agents and workflow webhooks using n8n and Zapier for automated lead enrichment.'
+        'Built reusable React & TypeScript dashboard components, cutting page load latency by 28%.',
+        'Developed Express.js REST endpoints and automated CI checks with GitHub Actions.',
+        'Integrated LLM-driven document parsing workflows for internal operations teams.'
       ]
     }
   ],
   projects: [
     {
       id: 'prj_1',
-      name: 'Automated Lead Extraction & Sheet Sync Agent',
-      description: 'An AI-powered Google Sheet workflow that automatically extracts B2B leads, validates email deliverability, and feeds Mailchimp campaigns.',
-      techStack: ['Google Sheets Automation', 'Mailchimp', 'AI Agents', 'Zapier', 'Lead Generation'],
-      link: 'https://github.com/ashiqur-automation/sheet-lead-agent'
+      name: 'AutoApply AI — Autonomous Job Search Agent',
+      description: 'Full-stack AI agent that searches live web job boards, runs ATS compatibility audits, and generates tailored PDF resumes.',
+      techStack: ['React', 'TypeScript', 'Express', 'Google Gemini API', 'Tailwind CSS'],
+      link: 'https://github.com/alexmorgan-dev/autoapply-ai'
     },
     {
       id: 'prj_2',
-      name: 'AI Agent Email Campaign Manager',
-      description: 'Custom AI agent built to craft personalized email sequences and manage multi-step lead nurture workflows.',
-      techStack: ['AI Automation', 'Email Marketing', 'Mailchimp API', 'Sheet Automation'],
-      link: 'https://github.com/ashiqur-automation/ai-email-campaigns'
+      name: 'SheetSync Lead Pipeline',
+      description: 'Automated webhook service syncing structured candidate & lead records with validation and reporting.',
+      techStack: ['Node.js', 'TypeScript', 'REST APIs', 'PostgreSQL'],
+      link: 'https://github.com/alexmorgan-dev/sheetsync-pipeline'
     }
   ],
-  customBio: 'Expert in B2B Lead Generation, Email Marketing, Mailchimp, Email Automation, Google Sheet Automation, Data Entry, and AI Agent / Workflow Automation. Specialized in non-calling / text-driven campaign execution for remote global teams.',
+  certificationsList: ['AWS Certified Cloud Practitioner', 'Meta Front-End Developer'],
+  customBio: 'Entry-level Full-Stack Software Engineer skilled in React, TypeScript, Node.js, and AI workflow automation. Looking for 100% remote engineering or automation roles.',
   uploadedCVFiles: [
     {
-      id: 'cv_file_1',
-      fileName: 'Ashiqur_Rahman_LeadGen_Email_Automation_CV.pdf',
-      fileSize: '135 KB',
-      uploadedAt: '2026-08-03',
+      id: 'cv_file_demo_1',
+      fileName: 'Alex_Morgan_Sample_Resume.pdf',
+      fileSize: '124 KB',
+      uploadedAt: '2026-08-01',
       fileType: 'pdf',
       isActive: true,
-      contentPreview: 'Ashiqur Rahman - Lead Generation, Email Marketing, Mailchimp, Sheet & AI Automation Specialist CV.'
+      contentPreview: 'Sample template CV — upload your own PDF, DOCX, or TXT resume to auto-populate your real profile.'
     }
   ],
-  masterCV: `# Ashiqur Rahman
-**Email:** ashiqurrahman47th@gmail.com | **Location:** Remote / Worldwide (Anywhere)
-**LinkedIn:** linkedin.com/in/ashiqur-rahman-leadgen | **Portfolio:** ashiqur-leadgen.dev
+  masterCV: `# Alex Morgan
+**Email:** alex.morgan@example.com | **Location:** Remote / Worldwide
+**GitHub:** github.com/alexmorgan-dev | **LinkedIn:** linkedin.com/in/alex-morgan-demo
 
 ---
 
 ### PROFESSIONAL SUMMARY
-Results-driven **Lead Generation & Email Marketing Automation Specialist** with 2+ years of experience executing high-converting B2B lead generation campaigns, **Mailchimp email drip automation**, **Google Sheet workflow automation**, data entry/mining, and **building AI agents** for automated campaign execution. Specialized in 100% remote, non-voice / non-calling roles across global teams.
+Entry-level **Full-Stack Software Engineer** with hands-on experience building production web apps in **React, TypeScript, and Node.js**, plus practical experience integrating **LLM & workflow automation** tools.
 
 ---
 
-### CORE EXPERTISE & SKILLS
-- **Lead Generation & Prospecting:** B2B Prospect Enrichment, Web Scraping, Data Mining, Verified Lead Lists
-- **Email Marketing & Campaigns:** Mailchimp, Cold Email Automation, Drip Sequences, Deliverability Optimization
-- **Automation & Tools:** Google Sheet Automation (AppScript/Macros), Zapier, Make.com, n8n, AI Agent Building
-- **Data & CRM Management:** Data Entry, Data Cleaning, HubSpot, Notion, Excel/Sheets Advanced Formulas
-- **Role Preferences:** 100% Remote (Worldwide/Anywhere), Non-Voice / Non-Calling Roles Only
+### TECHNICAL SKILLS
+- **Frontend:** React, TypeScript, JavaScript (ES2022), Tailwind CSS, HTML5/CSS3
+- **Backend & Data:** Node.js, Express, REST APIs, PostgreSQL, SQL
+- **AI & Tooling:** Google Gemini SDK, Git, GitHub Actions, Docker, Vite
 
 ---
 
-### WORK EXPERIENCE
-**Lead Generation & Email Automation Specialist** — GrowthFlow Digital *(2024 – Present)*
-- Executed end-to-end B2B lead generation and targeted email marketing campaigns using Mailchimp and custom automation tools.
-- Developed Google Sheet macros & AppScripts that automated lead cleaning, email verification, and daily CRM syncing.
-- Built AI workflow agents to personalize email sequences, resulting in a 40%+ increase in positive response rates.
+### EXPERIENCE
+**Junior Software Developer Intern** — CloudSpark Labs *(Jun 2024 – May 2025)*
+- Engineered modular React + TypeScript UI views and reduced initial bundle render time by 28%.
+- Built Node.js/Express API routes with structured validation and automated test coverage.
+- Implemented AI-assisted document extraction pipelines to streamline internal data workflows.
+
+---
+
+### PROJECTS
+- **AutoApply AI**: Full-stack job search & ATS resume tailoring agent built with React, Express, and Gemini Search Grounding.
+- **SheetSync Lead Pipeline**: Automated Node.js data enrichment & webhook pipeline with PostgreSQL storage.
 
 ---
 
 ### EDUCATION
-**Bachelor Degree in Business & Digital Marketing** *(Graduated 2024)*`
+**B.S. in Computer Science** — State University of Technology *(2025, GPA: 3.8/4.0)*`
 };
 
 export const DEFAULT_SCHEDULE_CONFIG: ScheduleConfig = {
@@ -112,194 +135,173 @@ export const DEFAULT_SCHEDULE_CONFIG: ScheduleConfig = {
   maxAppsPerRun: 5,
   minMatchScore: 70,
   isRemoteOnly: true,
-  fresherOnly: false,
+  fresherOnly: true,
+  nonVoiceOnly: false,
   targetTitles: [
-    'Lead Generation Specialist',
-    'Email Marketing Specialist',
-    'Mailchimp & Campaign Specialist',
-    'Email Automation Specialist',
-    'Sheet & Workflow Automation Specialist',
-    'AI Automation & Agent Developer'
+    'Junior Full-Stack Developer',
+    'Frontend React Developer',
+    'Entry-Level Software Engineer',
+    'AI Automation Engineer'
   ],
-  locations: ['Remote', 'Worldwide', 'Anywhere'],
-  excludedCompanies: ['Cold Call Telemarketing Inc', 'Outbound Sales Call Center', 'Voice Support Agency'],
-  notifyViaEmail: true,
-  syncGoogleTasks: true,
+  locations: ['Remote', 'Worldwide'],
+  excludedCompanies: ['Example Staffing Agency'],
+  notifyViaEmail: false,
+  syncGoogleTasks: false,
   savedSearchAlerts: [
     {
-      id: 'alert_1',
-      name: 'Remote Lead Generation & Email Marketing',
-      queryKeywords: ['Lead Generation', 'Mailchimp', 'Email Marketing', 'Email Automation'],
-      targetTitles: ['Lead Generation Specialist', 'Email Marketing Specialist', 'Mailchimp Specialist'],
+      id: 'alert_demo_1',
+      name: 'Remote Junior React & TypeScript Roles',
+      queryKeywords: ['React', 'TypeScript', 'Node.js', 'Tailwind CSS'],
+      targetTitles: ['Junior Full-Stack Developer', 'Frontend React Developer'],
       locationType: 'remote_only',
       experienceLevel: 'entry',
-      datePosted: '24h',
-      minSalary: '40k',
+      datePosted: '7d',
+      minSalary: '60k',
       isEnabled: true,
-      lastRunAt: 'Today at 09:00 AM',
-      matchesFoundCount: 12
-    },
-    {
-      id: 'alert_2',
-      name: 'Sheet Automation & AI Agent Build Jobs',
-      queryKeywords: ['Sheet Automation', 'Google Sheets', 'AI Automation', 'AI Agent', 'Data Entry'],
-      targetTitles: ['Workflow Automation Specialist', 'Data Entry & Automation Specialist', 'AI Automation Specialist'],
-      locationType: 'remote_only',
-      experienceLevel: 'fresher',
-      datePosted: '3d',
-      minSalary: '40k',
-      isEnabled: true,
-      lastRunAt: 'Yesterday',
-      matchesFoundCount: 9
+      lastRunAt: 'Not run yet',
+      matchesFoundCount: 3
     }
   ]
 };
 
 export const SAMPLE_DISCOVERED_JOBS: JobListing[] = [
   {
-    id: 'job_1',
-    title: 'Lead Generation & Email Marketing Specialist (100% Remote - Worldwide)',
-    company: 'Apex Digital Growth',
-    location: 'Remote (Worldwide / Anywhere)',
-    salary: '$50,000 - $65,000 / year',
+    id: 'job_demo_1',
+    title: 'Junior Full-Stack Developer (100% Remote)',
+    company: 'Northstar Cloud Systems',
+    location: 'Remote (Worldwide)',
+    salary: '$65,000 - $82,000 / year',
     jobType: 'Full-time Remote',
-    experienceReq: '1-2 Years / Beginner Welcome',
+    experienceReq: 'Entry Level / 0-2 Years',
     source: 'Indeed',
-    sourceUrl: 'https://www.indeed.com/viewjob?jk=apex_leadgen_01',
-    postedDate: '4 hours ago',
-    description: `We are seeking a detail-oriented Lead Generation & Email Marketing Specialist to join our global remote team. No cold calling required! All communication and campaigns are purely email & text workflow based.
+    sourceUrl: 'https://www.indeed.com/jobs?q=junior+full+stack+developer+remote',
+    postedDate: '1 day ago',
+    description: `Northstar Cloud Systems is hiring a Junior Full-Stack Developer to help build customer-facing SaaS dashboards and internal automation tools.
 
 Key Responsibilities:
-- Build targeted B2B lead lists using web research, scraping, and lead generation tools.
-- Setup and manage Mailchimp email automation campaigns and drip workflows.
-- Utilize Google Sheets automation to organize, clean, and verify prospect data.
-- Integrate AI automation tools to personalize outreach and campaign reporting.
+- Build responsive web interfaces with React, TypeScript, and Tailwind CSS.
+- Develop and maintain REST API endpoints in Node.js / Express backed by PostgreSQL.
+- Collaborate asynchronously with a distributed global engineering team.
 
 Requirements:
-- Hands-on experience with Lead Generation, Mailchimp, and Email Automation.
-- Proficiency with Google Sheets, Excel formulas, and Sheet Automation.
-- Knowledge of AI tools or AI Agent automation is a strong plus.
-- Absolutely NO phone calling or voice calls involved. 100% text/email based.
-- Open to candidates worldwide (no US residency restriction).`,
-    companyDomain: 'apexdigitalgrowth.io',
-    careerPageUrl: 'https://apexdigitalgrowth.io/careers/lead-generation-specialist',
-    matchScore: 98,
-    matchReasoning: 'Perfect 100% fit! Matches all your core strengths: Lead Generation, Mailchimp, Email Automation, Sheet Automation, AI Agent workflows. 100% Remote Worldwide with zero calling/voice required.',
-    requiredSkills: ['Lead Generation', 'Email Marketing', 'Mailchimp', 'Email Automation', 'Sheet Automation', 'Data Entry'],
+- Strong fundamentals in TypeScript, React, and modern JavaScript.
+- Familiarity with Git, REST APIs, and relational databases.
+- Open to remote candidates worldwide.`,
+    companyDomain: 'northstarcloud.example.com',
+    careerPageUrl: 'https://northstarcloud.example.com/careers',
+    matchScore: 94,
+    matchReasoning: 'Strong overlap across React, TypeScript, Node.js, Tailwind CSS, and PostgreSQL with entry-level experience fit.',
+    requiredSkills: ['React', 'TypeScript', 'Node.js', 'Tailwind CSS', 'PostgreSQL', 'REST APIs'],
     applyMethod: 'company_portal',
     status: 'cv_tailored',
-    discoveredAt: new Date(Date.now() - 3600000 * 2).toISOString()
+    discoveredAt: new Date(Date.now() - 3600000 * 3).toISOString()
   },
   {
-    id: 'job_2',
-    title: 'Sheet Automation & Email Campaign Specialist',
-    company: 'Nexus Marketing Systems',
+    id: 'job_demo_2',
+    title: 'Frontend React Engineer (Entry Level)',
+    company: 'Veloce Labs',
     location: 'Remote (Anywhere)',
-    salary: '$45,000 - $60,000 / year',
+    salary: '$60,000 - $78,000 / year',
     jobType: 'Full-time Remote',
-    experienceReq: 'Fresher / 0-2 Years',
+    experienceReq: 'Fresher / 0-1 Years',
     source: 'Indeed',
-    sourceUrl: 'https://www.indeed.com/viewjob?jk=nexus_sheet_02',
-    postedDate: '1 day ago',
-    description: `Nexus Marketing Systems is hiring a Remote Sheet Automation & Email Campaign Specialist.
-    
+    sourceUrl: 'https://www.indeed.com/jobs?q=junior+react+developer+remote',
+    postedDate: '2 days ago',
+    description: `Veloce Labs is looking for an entry-level Frontend React Engineer passionate about clean UI architecture and fast web performance.
+
 Role Overview:
-- Manage automated lead pipelines using Google Sheets, AppScript, and Mailchimp.
-- Perform high-accuracy data entry, prospect data verification, and list enrichment.
-- Build automated email sequences and monitor campaign open/click-through performance.
-- Utilize AI tools to assist in lead research and workflow automation.
+- Translate product specs into accessible, maintainable React + TypeScript components.
+- Integrate backend JSON APIs and optimize client-side state.
+- Participate in async code reviews and weekly sprint planning.
 
 Qualifications:
-- Demonstrated skills in Google Sheets automation, Mailchimp, and Email Marketing.
-- Experience in lead generation and data entry.
-- 100% non-voice role; no phone calling required.
-- Global remote applicants welcome.`,
-    companyDomain: 'nexusmarketingsystems.com',
-    careerPageUrl: 'https://nexusmarketingsystems.com/jobs/sheet-automation-specialist',
-    matchScore: 95,
-    matchReasoning: 'Excellent alignment! Role focuses on Sheet Automation, Mailchimp, Data Entry, and Email Automation. Non-voice, 100% remote worldwide.',
-    requiredSkills: ['Sheet Automation', 'Mailchimp', 'Email Automation', 'Data Entry', 'Lead Generation', 'AI Automation'],
+- Hands-on projects or internship experience with React and TypeScript.
+- Understanding of Git workflows and modern CSS (Tailwind CSS).`,
+    companyDomain: 'velocelabs.example.io',
+    careerPageUrl: 'https://velocelabs.example.io/careers',
+    matchScore: 91,
+    matchReasoning: 'Matches core React, TypeScript, Tailwind CSS, and Git profile skills with fresher-friendly experience criteria.',
+    requiredSkills: ['React', 'TypeScript', 'Tailwind CSS', 'Git & GitHub', 'REST APIs'],
     applyMethod: 'company_portal',
     status: 'discovered',
-    discoveredAt: new Date(Date.now() - 3600000 * 12).toISOString()
+    discoveredAt: new Date(Date.now() - 3600000 * 10).toISOString()
   },
   {
-    id: 'job_3',
-    title: 'AI Automation & Lead Workflow Specialist',
-    company: 'FlowBot AI Agency',
-    location: 'Remote (Worldwide)',
-    salary: '$55,000 - $70,000 / year',
+    id: 'job_demo_3',
+    title: 'AI Workflow & Automation Engineer',
+    company: 'OrbitFlow AI',
+    location: 'Remote (Global)',
+    salary: '$70,000 - $90,000 / year',
     jobType: 'Full-time Remote',
-    experienceReq: 'Beginner / 1-2 Years',
+    experienceReq: 'Entry / 1-2 Years',
     source: 'LinkedIn',
-    sourceUrl: 'https://www.linkedin.com/jobs/view/flowbot_ai_03',
-    postedDate: '2 days ago',
-    description: `FlowBot AI Agency is looking for a Remote AI Automation & Lead Workflow Specialist to build automated AI agents for lead generation and campaign workflows.
+    sourceUrl: 'https://www.linkedin.com/jobs/search/?keywords=ai+automation+engineer+remote',
+    postedDate: '3 days ago',
+    description: `OrbitFlow AI builds intelligent workflow agents for growing operations teams. We are seeking a builder who loves connecting APIs, LLMs, and clean web interfaces.
 
 Responsibilities:
-- Build AI agent workflows (Zapier, n8n, Make, or custom API scripts) for lead capture and enrichment.
-- Connect Google Sheets, CRM databases, and email automation platforms.
-- Create automated email sequences in Mailchimp and custom AI email generators.
+- Design reliable LLM-powered extraction and classification workflows using Gemini / OpenAI APIs.
+- Build TypeScript/Node.js backend connectors and lightweight React admin views.
+- Monitor prompt accuracy, latency, and API reliability.
 
 Requirements:
-- Passion for AI Automation, AI Agent building, and Lead Generation.
-- Expertise in Google Sheet automation and Mailchimp / Email Marketing.
-- Completely non-voice role. Remote anywhere in the world.`,
-    companyDomain: 'flowbotai.agency',
-    careerPageUrl: 'https://flowbotai.agency/careers/ai-lead-workflow-specialist',
-    matchScore: 94,
-    matchReasoning: 'Great match for your AI Agent building & AI automation skills combined with Lead Generation and Email Marketing!',
-    requiredSkills: ['AI Automation', 'AI Agent Build', 'Lead Generation', 'Sheet Automation', 'Mailchimp', 'Email Marketing'],
+- Experience with Node.js, TypeScript, REST APIs, and AI workflow automation.
+- Strong problem-solving and documentation habits.`,
+    companyDomain: 'orbitflow.example.ai',
+    careerPageUrl: 'https://orbitflow.example.ai/jobs',
+    matchScore: 89,
+    matchReasoning: 'Direct fit for AI Workflow Automation, Node.js, TypeScript, and REST API integration skills.',
+    requiredSkills: ['AI Workflow Automation', 'Node.js', 'TypeScript', 'REST APIs', 'React'],
     applyMethod: 'company_portal',
     status: 'discovered',
-    discoveredAt: new Date(Date.now() - 3600000 * 24).toISOString()
+    discoveredAt: new Date(Date.now() - 3600000 * 22).toISOString()
   }
 ];
 
 export const SAMPLE_APPLICATIONS: ApplicationRecord[] = [
   {
-    id: 'app_1',
-    jobId: 'job_101',
+    id: 'app_demo_1',
+    jobId: 'job_demo_101',
     jobTitle: 'Junior Frontend Developer (Remote)',
     company: 'Aura Systems Inc.',
     location: 'Remote',
     appliedAt: new Date(Date.now() - 86400000 * 1).toISOString(),
     matchScore: 95,
-    tailoredCV: `# Alex Vance - Customized Resume for Aura Systems Inc.
-**Role Target:** Junior Frontend Developer
+    tailoredCV: `# Alex Morgan — Tailored Resume for Aura Systems Inc.
+**Target Role:** Junior Frontend Developer (Remote)
 
 ### HIGHLIGHTED KEYWORD MATCHES
-- **React, TypeScript, Tailwind CSS, REST APIs, Component State Optimization**
+- **React, TypeScript, Tailwind CSS, REST APIs, Modular UI Architecture**
 
 ### SUMMARY
-Fresher Computer Science Graduate (GPA 3.8) specializing in React and TypeScript. Delivered 12+ production React components during internship at TechStart Lab. Built AI-integrated web tools using Node.js and REST APIs.
+Entry-level Software Engineer with a B.S. in Computer Science (GPA 3.8) and hands-on internship experience building React and TypeScript applications. Reduced page load latency by 28% at CloudSpark Labs.
 
-### TAILORED PROJECTS
-- **TaskPulse AI Planner**: Built with React, TypeScript, and Express. Perfectly aligned with Aura Systems' frontend architecture goals.`,
+### RELEVANT PROJECTS
+- **AutoApply AI**: Full-stack React, TypeScript, and Express application featuring live AI search grounding and PDF export.`,
     tailoredCoverLetter: `Dear Hiring Team at Aura Systems Inc.,
 
-I am thrilled to submit my application for the Junior Frontend Developer position. As a recent Computer Science graduate with hands-on experience building React and TypeScript web applications, I have followed Aura Systems' work in building intuitive user interfaces with great admiration.
+I am excited to apply for the Junior Frontend Developer (Remote) position. With a Computer Science degree and hands-on experience building modular React and TypeScript interfaces during my internship at CloudSpark Labs, I am eager to contribute clean, reliable code to your product team.
 
-During my internship at TechStart Lab, I developed modular UI components with Tailwind CSS and integrated RESTful endpoints, improving frontend performance by 25%. My personal projects, such as TaskPulse AI Planner, further demonstrate my ability to deliver clean, maintainable code rapidly.
+At CloudSpark Labs, I engineered reusable UI components with Tailwind CSS and integrated REST endpoints, reducing page load latency by 28%. My open-source work on AutoApply AI further demonstrates my ability to ship end-to-end TypeScript applications quickly.
 
-I am eager to bring my strong technical fundamentals, enthusiasm, and remote productivity mindset to Aura Systems. Thank you for your time and consideration.
+Thank you for your time and consideration.
 
 Sincerely,
-Alex Vance`,
+Alex Morgan`,
     formFieldsFilled: [
-      { fieldLabel: 'Full Name', fieldType: 'text', fieldName: 'fullName', valueToFill: 'Alex Vance', explanation: 'Matched from Master Candidate Profile' },
-      { fieldLabel: 'Email Address', fieldType: 'email', fieldName: 'email', valueToFill: 'ashiqurrahman47th@gmail.com', explanation: 'Matched from Master Candidate Profile' },
-      { fieldLabel: 'Phone Number', fieldType: 'phone', fieldName: 'phone', valueToFill: '+1 (555) 382-9012', explanation: 'Matched from Master Candidate Profile' },
-      { fieldLabel: 'Experience Level', fieldType: 'dropdown', fieldName: 'experienceLevel', valueToFill: 'Fresher / Entry Level (0-1 yrs)', explanation: 'Auto-mapped to job requirement' },
-      { fieldLabel: 'Work Authorization', fieldType: 'dropdown', fieldName: 'workAuth', valueToFill: 'Authorized for any employer', explanation: 'No visa sponsorship needed' },
-      { fieldLabel: 'Why do you want to work at Aura Systems?', fieldType: 'textarea', fieldName: 'customEssay', valueToFill: 'I am inspired by Aura Systems focus on modular frontend architecture. My background in React and TypeScript makes this an ideal environment for me to contribute immediately while growing alongside senior mentors.', explanation: 'AI Generated response tailored to Aura Systems JD' },
-      { fieldLabel: 'Resume Attachment', fieldType: 'file_upload', fieldName: 'resumeFile', valueToFill: 'Alex_Vance_Tailored_Resume_AuraSystems.pdf', explanation: 'Dynamically generated tailored PDF CV' }
+      { fieldLabel: 'Full Name', fieldType: 'text', fieldName: 'fullName', valueToFill: 'Alex Morgan', explanation: 'Matched from Candidate Profile' },
+      { fieldLabel: 'Email Address', fieldType: 'email', fieldName: 'email', valueToFill: 'alex.morgan@example.com', explanation: 'Matched from Candidate Profile' },
+      { fieldLabel: 'Phone Number', fieldType: 'phone', fieldName: 'phone', valueToFill: '+1 (555) 014-8920', explanation: 'Matched from Candidate Profile' },
+      { fieldLabel: 'Experience Level', fieldType: 'dropdown', fieldName: 'experienceLevel', valueToFill: 'Entry Level (0-2 yrs)', explanation: 'Auto-mapped to job requirement' },
+      { fieldLabel: 'Work Authorization', fieldType: 'dropdown', fieldName: 'workAuth', valueToFill: 'Authorized for Remote Global Roles', explanation: 'Matched from Candidate Profile' },
+      { fieldLabel: 'Why do you want to work at Aura Systems?', fieldType: 'textarea', fieldName: 'customEssay', valueToFill: 'I admire Aura Systems focus on clean frontend architecture. My hands-on experience with React, TypeScript, and Tailwind CSS aligns directly with your engineering stack.', explanation: 'AI-tailored response to job description' },
+      { fieldLabel: 'Resume Attachment', fieldType: 'file_upload', fieldName: 'resumeFile', valueToFill: 'Alex_Morgan_Resume_AuraSystems.pdf', explanation: 'Generated tailored PDF CV' }
     ],
     applyMethod: 'company_portal',
-    companyCareerPageUrl: 'https://aurasystems.com/careers/apply?jobId=101',
-    confirmationDetails: 'Successfully submitted via Aura Systems Careers ATS Portal. Reference #AS-98214.',
+    companyCareerPageUrl: 'https://aurasystems.example.com/careers/apply',
+    confirmationDetails: 'Sample prepared application package (Ref #DEMO-98214).',
     status: 'applied',
-    notes: 'Confirmation email received. Automated follow-up task scheduled in 7 days.'
+    notes: 'Sample record — run the agent or edit your profile to create real tailored packages.'
   }
 ];
 
@@ -309,67 +311,131 @@ export const GITHUB_OPEN_SOURCE_TOOLS: GitHubTool[] = [
     name: 'Auto_Jobs_Applier_AIHawk',
     repo: 'federico-busato/Auto_Jobs_Applier_AIHawk',
     stars: 14200,
-    description: 'An AI-powered automated job search and application tool that uses LLMs (Gemini / OpenAI) to customize resumes and fill out job forms automatically.',
+    description: 'An AI-powered automated job search and application tool that uses LLMs to customize resumes and fill out job forms automatically.',
     category: 'Full Automation',
     features: [
-      'Automatic Job Search on Indeed & LinkedIn',
+      'Automatic Job Search on LinkedIn',
       'AI Resume Tailoring per job description',
-      'Automatic Easy Apply form filling using Playwright/Selenium',
-      'Detailed JSON application logs & stats dashboard'
+      'Automated Easy Apply form filling via Selenium',
+      'Detailed application logs & YAML config'
     ],
     pythonCommand: 'git clone https://github.com/federico-busato/Auto_Jobs_Applier_AIHawk.git\ncd Auto_Jobs_Applier_AIHawk\npip install -r requirements.txt\npython main.py',
     githubUrl: 'https://github.com/federico-busato/Auto_Jobs_Applier_AIHawk',
-    architectureNotes: 'Uses Playwright browser automation combined with LLM prompt pipelines to inspect form DOM elements, match candidate schema keys, and generate custom text responses for tricky questions.'
+    architectureNotes: 'Uses browser automation combined with LLM prompt pipelines to inspect form DOM elements, match candidate schema keys, and generate custom responses.'
   },
   {
     id: 'gh_2',
-    name: 'Indeed-Bot-Auto-Applier',
-    repo: 'job-hunter-ai/Indeed-Bot',
+    name: 'JobSpy (python-jobspy)',
+    repo: 'Bunsly/JobSpy',
     stars: 8900,
-    description: 'Lightweight scraper and automated application script for Indeed job listings focusing on Remote, Entry Level, and Fresher filters.',
-    category: 'Browser Bot',
+    description: 'Concurrent job scraper library supporting LinkedIn, Indeed, Glassdoor, ZipRecruiter, and Google Jobs with structured Pandas DataFrame output.',
+    category: 'Web Scraping',
     features: [
-      'Headless browser scraping on Indeed search queries',
-      'Filters out scam jobs and recruiter agencies',
-      'Directly parses external company career URLs',
-      'Automates form submission on Workday, Greenhouse, & Lever'
+      'Concurrent multi-board scraping (Indeed, LinkedIn, Glassdoor)',
+      'Remote, job type, and date-posted filters',
+      'Proxy & rate-limit support',
+      'Clean CSV / JSON export'
     ],
-    pythonCommand: 'pip install indeed-bot-ai\nindeed-bot run --config config.yaml --remote-only --fresher',
-    githubUrl: 'https://github.com/job-hunter-ai/Indeed-Bot',
-    architectureNotes: 'Uses BeautifulSoup and Puppeteer to extract company website links when Indeed listings redirect to external corporate portals.'
+    pythonCommand: 'pip install -U python-jobspy\npython -c "from jobspy import scrape_jobs; print(scrape_jobs(site_name=[\'indeed\'], search_term=\'software engineer\', is_remote=True))"',
+    githubUrl: 'https://github.com/Bunsly/JobSpy',
+    architectureNotes: 'Queries job board endpoints concurrently with clean normalization into unified job schemas.'
   },
   {
     id: 'gh_3',
-    name: 'Open-Resume-Tailor-AI',
-    repo: 'open-source-labs/ResumeTailor',
+    name: 'Resume-Matcher',
+    repo: 'srbhr/Resume-Matcher',
     stars: 11500,
-    description: 'CLI & API tool that takes a master Markdown resume and a target Job Description, returning an ATS-optimized PDF resume with target keywords.',
+    description: 'Open-source ATS keyword matching and resume optimization tool that compares your resume against job descriptions.',
     category: 'CV Tailoring',
     features: [
-      'ATS Keyword Density analyzer',
-      'Generates LaTeX and PDF resumes on the fly',
-      'Tailors bullet points based on JD action verbs',
-      'Outputs cover letter alongside customized resume'
+      'ATS Keyword & Semantic Similarity scoring',
+      'Extracts missing skills & phrasing from JDs',
+      'Local LLM / vector embedding support',
+      'Interactive analytics dashboard'
     ],
-    pythonCommand: 'npm install -g open-resume-tailor\nresume-tailor --resume my_cv.md --jd job.txt --output tailored_cv.pdf',
-    githubUrl: 'https://github.com/open-source-labs/ResumeTailor',
-    architectureNotes: 'Applies Gemini / GPT-4 prompt templates to analyze JD skill gaps and reweight resume bullet points without inventing false experience.'
+    pythonCommand: 'git clone https://github.com/srbhr/Resume-Matcher.git\ncd Resume-Matcher\npip install -r requirements.txt',
+    githubUrl: 'https://github.com/srbhr/Resume-Matcher',
+    architectureNotes: 'Parses resumes and job descriptions into structured tokens, then computes keyword coverage and vector similarity.'
   },
   {
     id: 'gh_4',
-    name: 'Career-Portal-Form-Extractor',
-    repo: 'agent-tools/form-extractor',
-    stars: 6400,
-    description: 'Scrapes and maps form inputs on popular ATS systems like Greenhouse, Lever, Workday, BambooHR, and custom HTML job forms.',
-    category: 'Web Scraping',
+    name: 'Reactive-Resume',
+    repo: 'AmruthPillai/Reactive-Resume',
+    stars: 29000,
+    description: 'Privacy-focused open-source resume builder with real-time Markdown/JSON editing and clean PDF export.',
+    category: 'CV Tailoring',
     features: [
-      'Detects common form field types (Work Auth, Salary, Essay)',
-      'Automated file attachment handler for PDFs',
-      'Bypasses basic anti-bot captcha traps with human emulation',
-      'Outputs structured form mapping JSON'
+      'Multiple ATS-friendly templates',
+      'JSON import/export & shareable links',
+      'Self-hostable with Docker',
+      'High-fidelity PDF rendering'
     ],
-    pythonCommand: 'python form_extractor.py --url https://company.lever.co/job-123',
-    githubUrl: 'https://github.com/agent-tools/form-extractor',
-    architectureNotes: 'Performs semantic element labeling on HTML input tags to match user profile fields (e.g. mapping "linkedin_profile_url" -> "linkedin").'
+    pythonCommand: 'git clone https://github.com/AmruthPillai/Reactive-Resume.git\ncd Reactive-Resume\npnpm install && pnpm dev',
+    githubUrl: 'https://github.com/AmruthPillai/Reactive-Resume',
+    architectureNotes: 'Maintains a strict JSON Resume schema rendered cleanly into print-ready PDF layouts.'
   }
 ];
+
+export const DEFAULT_LLM_CONFIG: LlmProviderConfig = {
+  provider: 'gemini',
+  model: 'gemini-3.1-flash-lite',
+};
+
+export const LLM_PROVIDER_CATALOG: LlmProviderMetadata[] = [
+  {
+    id: 'gemini',
+    name: 'Google Gemini',
+    envKeyName: 'GEMINI_API_KEY',
+    defaultModel: 'gemini-3.1-flash-lite',
+    supportsWebSearch: true,
+    description:
+      'Uses high-quota free-tier Gemini 3.1 Flash Lite for search & tailoring, paired with gemini-decision-1 for zero-token calibrated job scoring.',
+    models: [
+      { id: 'gemini-3.1-flash-lite', label: 'Gemini 3.1 Flash Lite', note: 'Highest free-tier quota (Default)' },
+      { id: 'gemini-4-hydrogen', label: 'Gemini 4 Hydrogen', note: 'Balanced (20 RPD free limit)' },
+      { id: 'gemini-4-neon', label: 'Gemini 4 Neon', note: 'Deep reasoning (Paid key)' },
+    ],
+  },
+  {
+    id: 'openrouter',
+    name: 'OpenRouter',
+    envKeyName: 'OPENROUTER_API_KEY',
+    defaultModel: 'openai/gpt-4o-mini',
+    supportsWebSearch: true,
+    description: 'Routes across 100+ models via OpenRouter with web search plugin support.',
+    models: [
+      { id: 'openai/gpt-4o-mini', label: 'OpenAI GPT-4o mini', note: 'Fast & affordable' },
+      { id: 'anthropic/claude-3.5-sonnet', label: 'Claude 3.5 Sonnet', note: 'Strong writing & JSON' },
+      { id: 'google/gemini-2.5-flash', label: 'Gemini 2.5 Flash', note: 'Fast multimodal' },
+      { id: 'meta-llama/llama-3.3-70b-instruct:free', label: 'Llama 3.3 70B (Free)', note: 'Free tier' },
+    ],
+  },
+  {
+    id: 'openai',
+    name: 'OpenAI',
+    envKeyName: 'OPENAI_API_KEY',
+    defaultModel: 'gpt-4o-mini',
+    supportsWebSearch: true,
+    description: 'Uses OpenAI Chat Completions and Responses API with live web_search_preview.',
+    models: [
+      { id: 'gpt-4o-mini', label: 'GPT-4o mini', note: 'Fast & cost-efficient' },
+      { id: 'gpt-4o', label: 'GPT-4o', note: 'High accuracy' },
+      { id: 'gpt-4.1-mini', label: 'GPT-4.1 mini', note: 'Structured JSON' },
+      { id: 'gpt-4.1', label: 'GPT-4.1', note: 'Flagship reasoning' },
+    ],
+  },
+  {
+    id: 'anthropic',
+    name: 'Claude (Anthropic)',
+    envKeyName: 'ANTHROPIC_API_KEY',
+    defaultModel: 'claude-3-5-haiku-latest',
+    supportsWebSearch: true,
+    description: 'Uses Anthropic Messages API with native PDF parsing and web search.',
+    models: [
+      { id: 'claude-3-5-haiku-latest', label: 'Claude 3.5 Haiku', note: 'Fast & economical' },
+      { id: 'claude-3-5-sonnet-latest', label: 'Claude 3.5 Sonnet', note: 'Balanced reasoning' },
+      { id: 'claude-sonnet-4-0', label: 'Claude Sonnet 4', note: 'High-precision tailoring' },
+    ],
+  },
+];
+

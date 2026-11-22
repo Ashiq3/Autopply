@@ -51,10 +51,13 @@ export interface UserProfile {
   requiresSponsorship: boolean;
   noticePeriod: string;
   skills: string[];
+  targetJobTitles?: string[];
   education: EducationItem[];
   workHistory: WorkHistoryItem[];
   projects: ProjectItem[];
+  certificationsList?: string[];
   masterCV: string; // Base Markdown/text resume
+  coverLetterTemplate?: string;
   customBio: string;
   uploadedCVFiles?: UploadedCVFile[];
 }
@@ -68,6 +71,7 @@ export interface IndeedFilterState {
   companyType: 'direct_only' | 'agency_ok';
   sortBy: 'relevance' | 'date';
   radius: 'exact' | '25' | '50' | '100';
+  nonVoiceOnly?: boolean;
 }
 
 export interface SavedSearchAlert {
@@ -93,6 +97,7 @@ export interface ScheduleConfig {
   minMatchScore: number; // e.g., 75%
   isRemoteOnly: boolean;
   fresherOnly: boolean;
+  nonVoiceOnly?: boolean;
   targetTitles: string[];
   locations: string[];
   excludedCompanies: string[];
@@ -102,6 +107,16 @@ export interface ScheduleConfig {
 }
 
 export type JobApplyMethod = 'indeed_direct' | 'company_portal' | 'email_apply' | 'external_form';
+
+export interface DecisionCalibration {
+  model: string;
+  shouldApplyProbability: number;
+  confidence: number;
+  seniorityTrack?: string;
+  remoteEligible?: boolean;
+  nonVoiceCompliant?: boolean;
+  totalOutputTokens?: number;
+}
 
 export interface JobCompatibilityAnalysis {
   jobId: string;
@@ -118,6 +133,7 @@ export interface JobCompatibilityAnalysis {
   missingRequirements: string[];
   strengths: string[];
   gapRecommendations: string[];
+  decisionCalibration?: DecisionCalibration;
 }
 
 export interface JobListing {
@@ -140,6 +156,7 @@ export interface JobListing {
   applyMethod: JobApplyMethod;
   status: 'discovered' | 'company_found' | 'cv_tailored' | 'form_mapped' | 'applied' | 'failed' | 'skipped';
   discoveredAt: string;
+  decisionCalibration?: DecisionCalibration;
 }
 
 export interface FormFieldMapping {
@@ -203,3 +220,43 @@ export interface GitHubTool {
   githubUrl: string;
   architectureNotes: string;
 }
+
+export interface SearchExecutionStats {
+  passesExecuted: number;
+  rawCandidatesFound: number;
+  verifiedCount: number;
+  groundingSourcesCount: number;
+  durationMs: number;
+  auditSummary?: string;
+}
+
+export interface KeywordSuggestionsResult {
+  suggestedTitles: string[];
+  suggestedKeywords: string[];
+  searchStrategyNote: string;
+}
+
+export type LlmProviderId = 'gemini' | 'openrouter' | 'openai' | 'anthropic';
+
+export interface LlmProviderConfig {
+  provider: LlmProviderId;
+  model: string;
+}
+
+export interface LlmModelOption {
+  id: string;
+  label: string;
+  note?: string;
+}
+
+export interface LlmProviderMetadata {
+  id: LlmProviderId;
+  name: string;
+  envKeyName: string;
+  defaultModel: string;
+  supportsWebSearch: boolean;
+  description: string;
+  models: LlmModelOption[];
+}
+
+export type ProviderAvailabilityMap = Record<LlmProviderId, boolean>;

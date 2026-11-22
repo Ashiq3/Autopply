@@ -1,181 +1,431 @@
-import React, { useState } from 'react';
-import { Navbar } from './components/Navbar';
+import React, { useState, useEffect } from 'react';
+import { Navbar, SidebarNav } from './components/Navbar';
 import { AgentDashboard } from './components/AgentDashboard';
 import { JobsSearchEngine } from './components/JobsSearchEngine';
 import { ApplicationsTracker } from './components/ApplicationsTracker';
 import { CandidateProfileEditor } from './components/CandidateProfileEditor';
 import { SettingsSchedule } from './components/SettingsSchedule';
-import { GithubToolsHub } from './components/GithubToolsHub';
-import { 
-  DEFAULT_USER_PROFILE, 
-  DEFAULT_SCHEDULE_CONFIG, 
-  SAMPLE_DISCOVERED_JOBS, 
-  SAMPLE_APPLICATIONS 
+import {
+  DEFAULT_USER_PROFILE,
+  DEFAULT_SCHEDULE_CONFIG,
+  SAMPLE_DISCOVERED_JOBS,
+  SAMPLE_APPLICATIONS,
+  DEFAULT_LLM_CONFIG,
 } from './data/defaults';
-import { 
-  UserProfile, 
-  ScheduleConfig, 
-  JobListing, 
-  ApplicationRecord, 
-  AgentLog 
+import {
+  UserProfile,
+  ScheduleConfig,
+  JobListing,
+  ApplicationRecord,
+  AgentLog,
+  AgentStep,
+  SavedSearchAlert,
+  SearchExecutionStats,
+  LlmProviderConfig,
+  ProviderAvailabilityMap,
 } from './types';
+
+const STORAGE_KEYS = {
+  PROFILE: 'autoapply_user_profile_v1',
+  SCHEDULE: 'autoapply_schedule_config_v1',
+  JOBS: 'autoapply_discovered_jobs_v1',
+  APPLICATIONS: 'autoapply_applications_v1',
+  THEME: 'autoapply_theme_v1',
+  LLM_CONFIG: 'autoapply_llm_config_v2',
+};
+
+function loadInitialLlmConfig(): LlmProviderConfig {
+  try {
+    const v2 = localStorage.getItem(STORAGE_KEYS.LLM_CONFIG);
+    if (v2) return JSON.parse(v2) as LlmProviderConfig;
+
+    const v1 = localStorage.getItem('autoapply_llm_config_v1');
+    if (v1) {
+      const parsed = JSON.parse(v1) as LlmProviderConfig;
+      if (parsed.provider !== 'gemini') {
+        return parsed;
+      }
+    }
+  } catch {
+    // Ignore storage access errors
+  }
+  return DEFAULT_LLM_CONFIG;
+}
+
+function loadFromStorage<T>(key: string, fallback: T): T {
+  try {
+    const raw = localStorage.getItem(key);
+    if (!raw) return fallback;
+    return JSON.parse(raw) as T;
+  } catch {
+    return fallback;
+  }
+}
+
+function getInitialTheme(): 'light' | 'dark' {
+  try {
+    const saved = localStorage.getItem(STORAGE_KEYS.THEME);
+    if (saved === 'dark' || saved === 'light') return saved;
+    if (window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches) {
+      return 'dark';
+    }
+  } catch {
+    // Ignore storage access errors
+  }
+  return 'light';
+}
 
 export default function App() {
   const [activeTab, setActiveTab] = useState<string>('dashboard');
-  const [userProfile, setUserProfile] = useState<UserProfile>(DEFAULT_USER_PROFILE);
-  const [scheduleConfig, setScheduleConfig] = useState<ScheduleConfig>(DEFAULT_SCHEDULE_CONFIG);
-  const [discoveredJobs, setDiscoveredJobs] = useState<JobListing[]>(SAMPLE_DISCOVERED_JOBS);
-  const [applications, setApplications] = useState<ApplicationRecord[]>(SAMPLE_APPLICATIONS);
-  
+  const [mobileNavOpen, setMobileNavOpen] = useState<boolean>(false);
+  const [theme, setTheme] = useState<'light' | 'dark'>(getInitialTheme);
+
+  const [userProfile, setUserProfile] = useState<UserProfile>(() =>
+    loadFromStorage(STORAGE_KEYS.PROFILE, DEFAULT_USER_PROFILE)
+  );
+  const [scheduleConfig, setScheduleConfig] = useState<ScheduleConfig>(() =>
+    loadFromStorage(STORAGE_KEYS.SCHEDULE, DEFAULT_SCHEDULE_CONFIG)
+  );
+  const [discoveredJobs, setDiscoveredJobs] = useState<JobListing[]>(() =>
+    loadFromStorage(STORAGE_KEYS.JOBS, SAMPLE_DISCOVERED_JOBS)
+  );
+  const [applications, setApplications] = useState<ApplicationRecord[]>(() =>
+    loadFromStorage(STORAGE_KEYS.APPLICATIONS, SAMPLE_APPLICATIONS)
+  );
+  const [llmConfig, setLlmConfig] = useState<LlmProviderConfig>(loadInitialLlmConfig);
+  const [providerAvailability, setProviderAvailability] = useState<ProviderAvailabilityMap | null>(null);
+
   const [isAgentRunning, setIsAgentRunning] = useState<boolean>(false);
+  const [pipelinePhase, setPipelinePhase] = useState<string | null>(null);
+  const [activeJobId, setActiveJobId] = useState<string | null>(null);
   const [isSearching, setIsSearching] = useState<boolean>(false);
+  const [searchError, setSearchError] = useState<string | null>(null);
+  const [lastSearchStats, setLastSearchStats] = useState<SearchExecutionStats | null>(null);
 
   const [agentLogs, setAgentLogs] = useState<AgentLog[]>([
     {
       id: 'log_0',
       timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' }),
       step: 'IDLE',
-      message: 'AutoApply AI Agent initialized. Monitoring schedule: Mon-Fri at 09:00 AM.',
-      type: 'info'
-    }
+      message: `Workspace initialized. ${
+        scheduleConfig.enabled
+          ? `Schedule configured for ${scheduleConfig.runTime} (${scheduleConfig.frequency}).`
+          : 'Schedule paused.'
+      }`,
+      type: 'info',
+    },
   ]);
 
-  const addLog = (step: any, message: string, type: 'info' | 'success' | 'warning' | 'error' | 'thought' = 'info') => {
+  useEffect(() => {
+    const root = document.documentElement;
+    root.classList.toggle('dark', theme === 'dark');
+    try {
+      localStorage.setItem(STORAGE_KEYS.THEME, theme);
+    } catch {
+      // Ignore storage access errors
+    }
+  }, [theme]);
+
+  const handleToggleTheme = () => {
+    setTheme((prev) => (prev === 'dark' ? 'light' : 'dark'));
+  };
+
+  useEffect(() => {
+    try {
+      localStorage.setItem(STORAGE_KEYS.PROFILE, JSON.stringify(userProfile));
+    } catch {
+      // Ignore storage quota errors
+    }
+  }, [userProfile]);
+
+  useEffect(() => {
+    try {
+      localStorage.setItem(STORAGE_KEYS.SCHEDULE, JSON.stringify(scheduleConfig));
+    } catch {
+      // Ignore storage quota errors
+    }
+  }, [scheduleConfig]);
+
+  useEffect(() => {
+    try {
+      localStorage.setItem(STORAGE_KEYS.JOBS, JSON.stringify(discoveredJobs));
+    } catch {
+      // Ignore storage quota errors
+    }
+  }, [discoveredJobs]);
+
+  useEffect(() => {
+    try {
+      localStorage.setItem(STORAGE_KEYS.APPLICATIONS, JSON.stringify(applications));
+    } catch {
+      // Ignore storage quota errors
+    }
+  }, [applications]);
+
+  useEffect(() => {
+    try {
+      localStorage.setItem(STORAGE_KEYS.LLM_CONFIG, JSON.stringify(llmConfig));
+    } catch {
+      // Ignore storage quota errors
+    }
+  }, [llmConfig]);
+
+  const refreshProviderAvailability = async () => {
+    try {
+      const res = await fetch('/api/health');
+      if (!res.ok) return;
+      const data = await res.json();
+      if (data?.providers) {
+        setProviderAvailability(data.providers as ProviderAvailabilityMap);
+      }
+    } catch {
+      // Ignore background health check errors
+    }
+  };
+
+  useEffect(() => {
+    refreshProviderAvailability();
+  }, []);
+
+  useEffect(() => {
+    if (activeTab === 'settings') {
+      refreshProviderAvailability();
+    }
+  }, [activeTab]);
+
+  const addLog = (
+    step: AgentStep,
+    message: string,
+    type: 'info' | 'success' | 'warning' | 'error' | 'thought' = 'info'
+  ) => {
     const newLog: AgentLog = {
       id: `log_${Date.now()}_${Math.random()}`,
       timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' }),
       step,
       message,
-      type
+      type,
     };
-    setAgentLogs(prev => [newLog, ...prev]);
+    setAgentLogs((prev) => [newLog, ...prev]);
   };
 
-  // Trigger Live Indeed Search via Server-Side Gemini Search Grounding
+  const handleResetDemoData = () => {
+    [STORAGE_KEYS.PROFILE, STORAGE_KEYS.SCHEDULE, STORAGE_KEYS.JOBS, STORAGE_KEYS.APPLICATIONS].forEach((key) =>
+      localStorage.removeItem(key)
+    );
+    setUserProfile(DEFAULT_USER_PROFILE);
+    setScheduleConfig(DEFAULT_SCHEDULE_CONFIG);
+    setDiscoveredJobs(SAMPLE_DISCOVERED_JOBS);
+    setApplications(SAMPLE_APPLICATIONS);
+    setSearchError(null);
+    setLastSearchStats(null);
+    addLog('IDLE', 'Workspace restored to clean sample data.', 'info');
+  };
+
+  const handleAddManualJob = (job: JobListing) => {
+    setDiscoveredJobs((prev) => [job, ...prev]);
+    addLog('EVALUATING_MATCH', `Added custom job "${job.title}" at ${job.company} (${job.matchScore}% skill overlap).`, 'success');
+  };
+
+  // Trigger Multi-Pass Live Job Search via Server-Side AI Provider
   const handleSearchJobs = async (searchParams: any) => {
     setIsSearching(true);
-    addLog('SEARCHING_INDEED', 'Connecting to Gemini Search Grounding to scrape open Indeed & Web remote fresher jobs...', 'thought');
+    setSearchError(null);
+    addLog(
+      'SEARCHING_INDEED',
+      'Running 3-pass grounded search across job boards and direct ATS career portals...',
+      'thought'
+    );
 
     try {
       const response = await fetch('/api/agent/search-indeed-jobs', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(searchParams)
+        body: JSON.stringify({
+          ...searchParams,
+          excludedCompanies: scheduleConfig.excludedCompanies,
+          llmConfig,
+        }),
       });
       const data = await response.json();
 
-      if (data.success && data.jobs && data.jobs.length > 0) {
-        setDiscoveredJobs(prev => [...data.jobs, ...prev]);
-        addLog('EVALUATING_MATCH', `Successfully discovered ${data.jobs.length} new Remote Fresher job openings on Indeed/Web!`, 'success');
+      if (!response.ok || !data.success) {
+        throw new Error(data.error || `Search request failed (${response.status})`);
+      }
+
+      if (data.searchStats) {
+        setLastSearchStats(data.searchStats);
+      }
+
+      if (data.jobs && data.jobs.length > 0) {
+        setDiscoveredJobs((prev) => [...data.jobs, ...prev]);
+        const statsNote = data.searchStats
+          ? ` (${data.searchStats.passesExecuted} passes · ${data.searchStats.groundingSourcesCount} grounding sources · ${(
+              data.searchStats.durationMs / 1000
+            ).toFixed(1)}s)`
+          : '';
+        addLog(
+          'EVALUATING_MATCH',
+          `Verified ${data.jobs.length} new matching job listings${statsNote}.`,
+          'success'
+        );
       } else {
-        addLog('SEARCHING_INDEED', 'Search completed. Updated discovered job listings.', 'info');
+        addLog('SEARCHING_INDEED', 'Search completed with no additional listings matching current filters.', 'warning');
       }
     } catch (err: any) {
-      addLog('SEARCHING_INDEED', `Search query note: Used cached groundings for Indeed job listings.`, 'warning');
+      const msg = err.message || 'Search failed.';
+      setSearchError(msg);
+      addLog('ERROR', msg, 'error');
     } finally {
       setIsSearching(false);
     }
   };
 
-  // Full Autonomous Agent Pipeline Execution
+  // Run a Saved Search Alert directly from Schedule settings
+  const handleRunSavedAlert = async (alert: SavedSearchAlert) => {
+    setActiveTab('search');
+    await handleSearchJobs({
+      titles: alert.targetTitles,
+      keywords: alert.queryKeywords,
+      userProfileSummary: `${userProfile.fullName} - ${userProfile.customBio}`,
+      datePosted: alert.datePosted,
+      experienceLevel: alert.experienceLevel,
+      minSalary: alert.minSalary || 'any',
+      locationType: alert.locationType,
+      nonVoiceOnly: Boolean(scheduleConfig.nonVoiceOnly),
+    });
+  };
+
+  // Full Agent Preparation & Tailoring Pipeline
   const runAgentPipeline = async (targetJob?: JobListing) => {
     if (isAgentRunning) return;
+
+    const excludedSet = new Set(scheduleConfig.excludedCompanies.map((c) => c.toLowerCase()));
+    const jobToProcess =
+      targetJob ||
+      discoveredJobs.find(
+        (j) =>
+          j.status !== 'applied' &&
+          !excludedSet.has(j.company.toLowerCase()) &&
+          j.matchScore >= (scheduleConfig.minMatchScore || 0)
+      ) ||
+      discoveredJobs.find((j) => j.status !== 'applied');
+
+    if (!jobToProcess) {
+      addLog(
+        'IDLE',
+        'All discovered jobs have already been prepared. Search for new jobs in Job Search first.',
+        'warning'
+      );
+      return;
+    }
+
     setIsAgentRunning(true);
-
-    addLog('SEARCHING_INDEED', '🚀 Autonomous Job Applier Agent launched...', 'thought');
-
-    const jobToProcess = targetJob || discoveredJobs[0] || SAMPLE_DISCOVERED_JOBS[0];
-
-    // Delay helper for smooth visual agent step feedback
-    const delay = (ms: number) => new Promise(res => setTimeout(res, ms));
+    setPipelinePhase(`Preparing package for ${jobToProcess.company}...`);
+    setActiveJobId(jobToProcess.id);
+    addLog('SEARCHING_INDEED', `Starting pipeline for "${jobToProcess.title}" at ${jobToProcess.company}.`, 'thought');
 
     try {
-      // Step 1: Search / Select Job
-      await delay(800);
-      addLog('SEARCHING_INDEED', `Selected Job Listing: "${jobToProcess.title}" at ${jobToProcess.company}`, 'info');
+      let evaluatedScore = jobToProcess.matchScore;
+      let evaluatedJob = jobToProcess;
 
-      // Step 2: Match Scoring & Requirements
-      await delay(1000);
-      addLog('EVALUATING_MATCH', `Gemini Match Analysis: Candidate skills match ${jobToProcess.requiredSkills.join(', ')}. Match Score: ${jobToProcess.matchScore}%`, 'thought');
+      if (providerAvailability?.gemini) {
+        setPipelinePhase(`Pre-screening ${jobToProcess.company} with gemini-decision-1...`);
+        try {
+          const decRes = await fetch('/api/agent/decision-evaluate-jobs', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ job: jobToProcess, userProfile }),
+          });
+          const decData = await decRes.json();
+          if (decRes.ok && decData.success && decData.decisionCalibration) {
+            evaluatedScore = decData.overallScore ?? jobToProcess.matchScore;
+            evaluatedJob = {
+              ...jobToProcess,
+              matchScore: evaluatedScore,
+              decisionCalibration: decData.decisionCalibration,
+            };
+            setDiscoveredJobs((prev) => prev.map((j) => (j.id === jobToProcess.id ? evaluatedJob : j)));
+            const dc = decData.decisionCalibration;
+            addLog(
+              'EVALUATING_MATCH',
+              `Decision AI (${dc.model}): ${evaluatedScore}% calibrated fit · ${dc.shouldApplyProbability}% apply likelihood (${dc.confidence}% confidence · 0 output tokens).`,
+              'success'
+            );
+          }
+        } catch {
+          // Proceed cleanly if decision screening is temporarily unavailable
+        }
+      } else {
+        addLog(
+          'EVALUATING_MATCH',
+          `Evaluating fit against ${jobToProcess.requiredSkills.join(', ')} (${evaluatedScore}% baseline fit).`,
+          'thought'
+        );
+      }
 
-      // Step 3: Discover Company Website & Career Page
-      await delay(1200);
-      addLog('FINDING_COMPANY_SITE', `Executing Google Search Grounding to find ${jobToProcess.company} official domain & career portal...`, 'info');
-      
-      let companyInfo = {
-        companyDomain: jobToProcess.companyDomain || `${jobToProcess.company.toLowerCase().replace(/[^a-z0-9]/g, '')}.com`,
-        careerPageUrl: jobToProcess.careerPageUrl || `https://${jobToProcess.company.toLowerCase().replace(/[^a-z0-9]/g, '')}.com/careers`
+      // Step 3: Discover Company Website & Career Page (reuse existing portal URL if already discovered)
+      let companyInfo: { careerPageUrl: string; atsPlatform?: string } = {
+        careerPageUrl: jobToProcess.careerPageUrl || '',
+        atsPlatform: 'Career Portal',
       };
-
-      try {
+      if (companyInfo.careerPageUrl) {
+        addLog('DISCOVERING_CAREER_PAGE', `Using discovered career portal: ${companyInfo.careerPageUrl}`, 'success');
+      } else {
+        setPipelinePhase(`Step 1/3 · Finding official career portal for ${jobToProcess.company}...`);
+        addLog('FINDING_COMPANY_SITE', `Resolving official career portal for ${jobToProcess.company}...`, 'info');
         const companyRes = await fetch('/api/agent/find-company-careers', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ companyName: jobToProcess.company, jobTitle: jobToProcess.title })
+          body: JSON.stringify({ companyName: jobToProcess.company, jobTitle: jobToProcess.title, llmConfig }),
         });
         const compData = await companyRes.json();
-        if (compData.success) {
-          companyInfo = compData.companyDetails;
+        if (!companyRes.ok || !compData.success) {
+          throw new Error(compData.error || 'Failed to discover company career portal.');
         }
-      } catch (e) {
-        // Fallback
+        companyInfo = compData.companyDetails;
+        addLog('DISCOVERING_CAREER_PAGE', `Career portal resolved: ${companyInfo.careerPageUrl}`, 'success');
       }
-
-      addLog('DISCOVERING_CAREER_PAGE', `Career Portal Discovered: ${companyInfo.careerPageUrl}`, 'success');
 
       // Step 4: Tailor Resume & Cover Letter
-      await delay(1400);
-      addLog('TAILORING_RESUME', `Generating ATS-Optimized Tailored Resume & Custom Cover Letter addressing Hiring Manager at ${jobToProcess.company}...`, 'thought');
-
-      let tailoredResult = {
-        tailoredCV: `# ${userProfile.fullName} - Customized Resume for ${jobToProcess.company}
-**Email:** ${userProfile.email} | **Location:** ${userProfile.location}
-
-### SUMMARY
-Fresher Computer Science Graduate specializing in ${jobToProcess.requiredSkills.join(', ')}. Tailored specifically for ${jobToProcess.title} at ${jobToProcess.company}.`,
-        tailoredCoverLetter: `Dear Hiring Team at ${jobToProcess.company},\n\nI am thrilled to apply for the ${jobToProcess.title} position. With my background in Computer Science and hands-on projects in React and TypeScript, I am eager to contribute clean code to your engineering team.\n\nSincerely,\n${userProfile.fullName}`
-      };
-
-      try {
-        const tailorRes = await fetch('/api/agent/tailor-resume', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ userProfile, jobListing: jobToProcess })
-        });
-        const tailorData = await tailorRes.json();
-        if (tailorData.success && tailorData.result) {
-          tailoredResult = tailorData.result;
-        }
-      } catch (e) {
-        // Fallback
+      setPipelinePhase(`Step 2/3 · Tailoring CV & cover letter for ${jobToProcess.title}...`);
+      addLog('TAILORING_RESUME', `Tailoring CV and cover letter for ${jobToProcess.company}...`, 'thought');
+      const tailorRes = await fetch('/api/agent/tailor-resume', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ userProfile, jobListing: jobToProcess, llmConfig }),
+      });
+      const tailorData = await tailorRes.json();
+      if (!tailorRes.ok || !tailorData.success || !tailorData.result) {
+        throw new Error(tailorData.error || 'Failed to tailor resume and cover letter.');
       }
+      const tailoredResult = tailorData.result;
+      addLog(
+        'TAILORING_RESUME',
+        `Tailored CV & Cover Letter generated (${tailoredResult.matchScore || jobToProcess.matchScore}% alignment).`,
+        'success'
+      );
 
-      addLog('TAILORING_RESUME', `Tailored PDF CV created for ${jobToProcess.company} with keyword density 96%.`, 'success');
-
-      // Step 5: Map Form Fields
-      await delay(1200);
-      addLog('MAPPING_FORM', `Analyzing ATS Form inputs for Work Authorization, Salary Expectations, and Essay Responses...`, 'thought');
-
-      let formFields = [];
-      try {
-        const formRes = await fetch('/api/agent/map-form-fields', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ userProfile, jobListing: jobToProcess, tailoredCoverLetter: tailoredResult.tailoredCoverLetter })
-        });
-        const formData = await formRes.json();
-        if (formData.success) {
-          formFields = formData.formFields;
-        }
-      } catch (e) {
-        // Fallback
+      // Step 5: Map ATS Form Fields
+      setPipelinePhase(`Step 3/3 · Mapping ATS application form fields...`);
+      addLog('MAPPING_FORM', 'Mapping candidate profile details onto ATS form inputs...', 'thought');
+      const formRes = await fetch('/api/agent/map-form-fields', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          userProfile,
+          jobListing: jobToProcess,
+          tailoredCoverLetter: tailoredResult.tailoredCoverLetter,
+          llmConfig,
+        }),
+      });
+      const formData = await formRes.json();
+      if (!formRes.ok || !formData.success) {
+        throw new Error(formData.error || 'Failed to map ATS form fields.');
       }
+      const formFields = formData.formFields || [];
+      addLog('MAPPING_FORM', `Mapped ${formFields.length} ATS form fields.`, 'success');
 
-      addLog('MAPPING_FORM', `Mapped ${formFields.length || 7} form fields. Auto-filled custom motivation essay and attached tailored PDF CV.`, 'success');
-
-      // Step 6: Submit & Save Application
-      await delay(1500);
-      
+      // Step 6: Save Prepared Application Package
       const newAppRecord: ApplicationRecord = {
         id: `app_${Date.now()}`,
         jobId: jobToProcess.id,
@@ -183,107 +433,178 @@ Fresher Computer Science Graduate specializing in ${jobToProcess.requiredSkills.
         company: jobToProcess.company,
         location: jobToProcess.location,
         appliedAt: new Date().toISOString(),
-        matchScore: jobToProcess.matchScore,
+        matchScore: tailoredResult.matchScore || jobToProcess.matchScore,
         tailoredCV: tailoredResult.tailoredCV,
         tailoredCoverLetter: tailoredResult.tailoredCoverLetter,
         formFieldsFilled: formFields,
         applyMethod: jobToProcess.applyMethod,
         companyCareerPageUrl: companyInfo.careerPageUrl,
-        confirmationDetails: `Application successfully submitted via ${jobToProcess.company} Careers Portal. Confirmation Ref #${jobToProcess.company.substring(0,2).toUpperCase()}-${Math.floor(10000 + Math.random() * 90000)}.`,
+        confirmationDetails: `Tailored package prepared for ${jobToProcess.company} (${companyInfo.atsPlatform || 'Career Portal'}).`,
         status: 'applied',
-        notes: 'Automated application submission verified by agent.'
+        notes: tailoredResult.summaryReasoning || 'Prepared by AutoApply pipeline.',
       };
 
-      setApplications(prev => [newAppRecord, ...prev]);
+      setApplications((prev) => [newAppRecord, ...prev]);
+      setDiscoveredJobs((prev) => prev.map((j) => (j.id === jobToProcess.id ? { ...j, status: 'applied' } : j)));
 
-      // Update job status in discovered jobs
-      setDiscoveredJobs(prev => prev.map(j => j.id === jobToProcess.id ? { ...j, status: 'applied' } : j));
-
-      addLog('SUBMITTING_APPLICATION', `🎉 Application to ${jobToProcess.company} submitted successfully! Package saved with custom PDF resume & confirmation details.`, 'success');
-
+      addLog(
+        'SUBMITTING_APPLICATION',
+        `Application package for ${jobToProcess.company} saved to Applications.`,
+        'success'
+      );
     } catch (err: any) {
-      addLog('ERROR', `Pipeline error: ${err.message}`, 'error');
+      addLog('ERROR', err.message || 'Pipeline failed.', 'error');
     } finally {
       setIsAgentRunning(false);
+      setPipelinePhase(null);
+      setActiveJobId(null);
     }
   };
 
-  const handleTailorSingleJob = (job: JobListing) => {
-    setActiveTab('profile');
+  const handleUpdateApplicationStatus = (appId: string, newStatus: ApplicationRecord['status']) => {
+    setApplications((prev) => prev.map((a) => (a.id === appId ? { ...a, status: newStatus } : a)));
+  };
+
+  const handleDeleteApplication = (appId: string) => {
+    setApplications((prev) => prev.filter((a) => a.id !== appId));
+  };
+
+  const handleRemoveJob = (jobId: string) => {
+    setDiscoveredJobs((prev) => prev.filter((j) => j.id !== jobId));
   };
 
   return (
-    <div className="min-h-screen bg-slate-950 text-slate-100 flex flex-col font-sans selection:bg-indigo-500 selection:text-white">
-      
-      {/* Top Sticky Header */}
-      <Navbar
+    <div className="min-h-screen bg-[#f8f9fb] dark:bg-zinc-950 text-zinc-900 dark:text-zinc-100 flex transition-colors">
+      <SidebarNav
         activeTab={activeTab}
         setActiveTab={setActiveTab}
         scheduleConfig={scheduleConfig}
-        isAgentRunning={isAgentRunning}
-        onRunAgent={() => runAgentPipeline()}
+        userProfile={userProfile}
+        llmConfig={llmConfig}
+        mobileOpen={mobileNavOpen}
+        onCloseMobile={() => setMobileNavOpen(false)}
       />
 
-      {/* Main Container */}
-      <main className="flex-1 max-w-7xl w-full mx-auto px-4 sm:px-6 lg:px-8 py-6">
-        {activeTab === 'dashboard' && (
-          <AgentDashboard
-            discoveredJobs={discoveredJobs}
-            applications={applications}
-            agentLogs={agentLogs}
-            scheduleConfig={scheduleConfig}
-            userProfile={userProfile}
-            isAgentRunning={isAgentRunning}
-            onRunAgent={() => runAgentPipeline()}
-            onNavigateTab={setActiveTab}
-          />
-        )}
+      <div className="flex-1 flex flex-col min-w-0">
+        <Navbar
+          activeTab={activeTab}
+          setActiveTab={setActiveTab}
+          scheduleConfig={scheduleConfig}
+          userProfile={userProfile}
+          llmConfig={llmConfig}
+          isAgentRunning={isAgentRunning}
+          onRunAgent={() => runAgentPipeline()}
+          onOpenMobile={() => setMobileNavOpen(true)}
+          theme={theme}
+          onToggleTheme={handleToggleTheme}
+        />
 
-        {activeTab === 'search' && (
-          <JobsSearchEngine
-            discoveredJobs={discoveredJobs}
-            userProfile={userProfile}
-            isSearching={isSearching}
-            onSearchJobs={handleSearchJobs}
-            onApplySingleJob={(job) => runAgentPipeline(job)}
-            onTailorSingleJob={handleTailorSingleJob}
-          />
-        )}
+        <main className="flex-1 max-w-[1200px] w-full mx-auto px-5 sm:px-8 lg:px-10 py-8 sm:py-10">
+          {activeTab === 'dashboard' && (
+            <AgentDashboard
+              discoveredJobs={discoveredJobs}
+              applications={applications}
+              agentLogs={agentLogs}
+              scheduleConfig={scheduleConfig}
+              userProfile={userProfile}
+              llmConfig={llmConfig}
+              isAgentRunning={isAgentRunning}
+              pipelinePhase={pipelinePhase}
+              onRunAgent={() => runAgentPipeline()}
+              onNavigateTab={setActiveTab}
+              onUpdateProfile={(updated) => {
+                setUserProfile(updated);
+                addLog('IDLE', `Imported resume profile for ${updated.fullName}.`, 'success');
+              }}
+            />
+          )}
 
-        {activeTab === 'applications' && (
-          <ApplicationsTracker
-            applications={applications}
-            userProfile={userProfile}
-          />
-        )}
+          {activeTab === 'search' && (
+            <JobsSearchEngine
+              discoveredJobs={discoveredJobs}
+              userProfile={userProfile}
+              llmConfig={llmConfig}
+              isSearching={isSearching}
+              searchError={searchError}
+              lastSearchStats={lastSearchStats}
+              onDismissError={() => setSearchError(null)}
+              isAgentRunning={isAgentRunning}
+              activeJobId={activeJobId}
+              onSearchJobs={handleSearchJobs}
+              onAddManualJob={handleAddManualJob}
+              onApplySingleJob={(job) => runAgentPipeline(job)}
+              onRemoveJob={handleRemoveJob}
+              onUpdateScreenedJobs={(screened) => {
+                setDiscoveredJobs(screened);
+                addLog(
+                  'EVALUATING_MATCH',
+                  `Batch-screened ${screened.length} openings using gemini-decision-1 (0 output tokens).`,
+                  'success'
+                );
+              }}
+              onGoToApplications={() => setActiveTab('applications')}
+            />
+          )}
 
-        {activeTab === 'profile' && (
-          <CandidateProfileEditor
-            userProfile={userProfile}
-            onSaveProfile={(updated) => setUserProfile(updated)}
-          />
-        )}
+          {activeTab === 'applications' && (
+            <ApplicationsTracker
+              applications={applications}
+              userProfile={userProfile}
+              onUpdateStatus={handleUpdateApplicationStatus}
+              onDeleteApplication={handleDeleteApplication}
+            />
+          )}
 
-        {activeTab === 'settings' && (
-          <SettingsSchedule
-            scheduleConfig={scheduleConfig}
-            onSaveSchedule={(updated) => setScheduleConfig(updated)}
-          />
-        )}
+          {activeTab === 'profile' && (
+            <CandidateProfileEditor
+              userProfile={userProfile}
+              llmConfig={llmConfig}
+              onSaveProfile={(updated) => setUserProfile(updated)}
+              onResetDemoData={handleResetDemoData}
+            />
+          )}
 
-        {activeTab === 'github_tools' && (
-          <GithubToolsHub />
-        )}
-      </main>
+          {activeTab === 'settings' && (
+            <SettingsSchedule
+              scheduleConfig={scheduleConfig}
+              onSaveSchedule={(updated) => setScheduleConfig(updated)}
+              onRunSavedAlert={handleRunSavedAlert}
+              onResetDemoData={handleResetDemoData}
+              llmConfig={llmConfig}
+              onChangeLlmConfig={setLlmConfig}
+              providerAvailability={providerAvailability}
+              onRefreshProviders={refreshProviderAvailability}
+            />
+          )}
+        </main>
 
-      {/* Subtle Footer */}
-      <footer className="border-t border-slate-900 bg-slate-950 py-6 text-center text-xs text-slate-500">
-        <div className="max-w-7xl mx-auto px-4 flex flex-col sm:flex-row items-center justify-between gap-2">
-          <span>AutoApply AI — Autonomous Job Search & Application Agent</span>
-          <span className="text-slate-600">Powered by Google GenAI Grounding & Gemini 3.6 Flash</span>
-        </div>
-      </footer>
-
+        <footer className="border-t border-zinc-200 dark:border-zinc-800 bg-white dark:bg-zinc-900 py-5 px-5 sm:px-8 lg:px-10 text-sm text-zinc-500 dark:text-zinc-400">
+          <div className="max-w-[1200px] mx-auto flex flex-col sm:flex-row items-center justify-between gap-3">
+            <div className="flex items-center gap-3 flex-wrap justify-center sm:justify-start">
+              <span className="font-display font-semibold text-zinc-900 dark:text-zinc-100">AutoApply AI</span>
+              <span aria-hidden="true" className="text-zinc-300 dark:text-zinc-700">·</span>
+              <span>MIT License · Open-Source Job Search &amp; Resume Workspace</span>
+            </div>
+            <div className="flex items-center gap-3">
+              <button
+                type="button"
+                onClick={() => setActiveTab('profile')}
+                className="text-sm font-medium text-zinc-700 dark:text-zinc-300 hover:text-blue-600 dark:hover:text-blue-400 underline underline-offset-4"
+              >
+                {userProfile.fullName}
+              </button>
+              <span aria-hidden="true" className="text-zinc-300 dark:text-zinc-700">·</span>
+              <button
+                type="button"
+                onClick={() => setActiveTab('settings')}
+                className="text-sm font-mono text-zinc-600 dark:text-zinc-400 hover:text-blue-600 dark:hover:text-blue-400 underline underline-offset-4"
+              >
+                {llmConfig.provider} ({llmConfig.model})
+              </button>
+            </div>
+          </div>
+        </footer>
+      </div>
     </div>
   );
 }
