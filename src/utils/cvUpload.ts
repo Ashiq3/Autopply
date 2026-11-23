@@ -1,4 +1,5 @@
 import { LlmProviderConfig, UploadedCVFile, UserProfile } from '../types';
+import { agentFetch } from './llmClient';
 
 export async function uploadAndParseCVFile(
   file: File,
@@ -20,17 +21,16 @@ export async function uploadAndParseCVFile(
     });
   }
 
-  const res = await fetch('/api/agent/parse-cv-file', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({
+  const res = await agentFetch(
+    '/api/agent/parse-cv-file',
+    {
       fileName: file.name,
       fileTextContent,
       fileBase64,
       mimeType,
-      llmConfig,
-    }),
-  });
+    },
+    llmConfig
+  );
 
   const data = await res.json();
 

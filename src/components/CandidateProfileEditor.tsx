@@ -11,6 +11,7 @@ import {
 } from 'lucide-react';
 import { UserProfile, ExperienceLevel, LlmProviderConfig } from '../types';
 import { uploadAndParseCVFile } from '../utils/cvUpload';
+import { agentFetch } from '../utils/llmClient';
 
 interface CandidateProfileEditorProps {
   userProfile: UserProfile;
@@ -144,19 +145,18 @@ export const CandidateProfileEditor: React.FC<CandidateProfileEditorProps> = ({
     const benchmarkTitle = profile.targetJobTitles?.[0] || 'Software Engineer';
 
     try {
-      const response = await fetch('/api/agent/tailor-resume', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
+      const response = await agentFetch(
+        '/api/agent/tailor-resume',
+        {
           userProfile: profile,
           jobListing: {
             title: benchmarkTitle,
             company: 'Industry Benchmark',
             description: `Target role: ${benchmarkTitle}. Required skills: ${profile.skills.join(', ')}.`,
           },
-          llmConfig,
-        }),
-      });
+        },
+        llmConfig
+      );
       const data = await response.json();
       if (!response.ok || !data.success || !data.result) {
         throw new Error(data.error || 'Failed to analyze CV.');

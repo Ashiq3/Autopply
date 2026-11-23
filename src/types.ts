@@ -236,17 +236,27 @@ export interface KeywordSuggestionsResult {
   searchStrategyNote: string;
 }
 
-export type LlmProviderId = 'gemini' | 'openrouter' | 'openai' | 'anthropic';
+export type LlmProviderId =
+  | 'openrouter'
+  | 'openai'
+  | 'anthropic'
+  | 'groq'
+  | 'deepseek'
+  | 'together'
+  | 'mistral'
+  | 'custom';
 
 export interface LlmProviderConfig {
   provider: LlmProviderId;
   model: string;
+  baseUrl?: string;
 }
 
 export interface LlmModelOption {
   id: string;
   label: string;
   note?: string;
+  isFree?: boolean;
 }
 
 export interface LlmProviderMetadata {
@@ -254,9 +264,24 @@ export interface LlmProviderMetadata {
   name: string;
   envKeyName: string;
   defaultModel: string;
+  defaultBaseUrl?: string;
+  requiresApiKey: boolean;
   supportsWebSearch: boolean;
+  supportsDynamicModels: boolean;
+  apiKeyPlaceholder: string;
+  keyPortalUrl: string;
+  keyPortalLabel: string;
   description: string;
   models: LlmModelOption[];
 }
 
-export type ProviderAvailabilityMap = Record<LlmProviderId, boolean>;
+export interface ProviderCredentialEntry {
+  apiKey: string;
+  baseUrl?: string;
+  maskedHint?: string;
+  verifiedAt?: string;
+  authMethod?: 'oauth' | 'manual';
+}
+
+export type ProviderAvailabilityMap = Partial<Record<LlmProviderId, boolean>>;
+

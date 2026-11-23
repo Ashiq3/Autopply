@@ -1,5 +1,9 @@
 import express from 'express';
+import fs from 'fs';
 import path from 'path';
+import crypto from 'node:crypto';
+import dns from 'node:dns/promises';
+import net from 'node:net';
 import { createServer as createViteServer } from 'vite';
 import { GoogleGenAI, Type, ThinkingLevel } from '@google/genai';
 import mammoth from 'mammoth';
@@ -11,11 +15,22 @@ const DEFAULT_MODEL = process.env.GEMINI_MODEL || 'gemini-3.1-flash-lite';
 const FALLBACK_MODEL = 'gemini-4-hydrogen';
 const DECISION_MODEL = 'gemini-decision-1';
 
-type LlmProviderId = 'gemini' | 'openrouter' | 'openai' | 'anthropic';
+type LlmProviderId =
+  | 'openrouter'
+  | 'openai'
+  | 'anthropic'
+  | 'groq'
+  | 'deepseek'
+  | 'together'
+  | 'mistral'
+  | 'custom'
+  | 'gemini';
 
 interface LlmConfig {
   provider: LlmProviderId;
   model: string;
+  apiKey?: string;
+  baseUrl?: string;
 }
 
 interface LlmFileAttachment {
@@ -49,31 +64,75 @@ class LlmHttpError extends Error {
   }
 }
 
-const VALID_PROVIDERS: LlmProviderId[] = ['gemini', 'openrouter', 'openai', 'anthropic'];
+const PUBLIC_THIRD_PARTY_PROVIDERS: Exclude<LlmProviderId, 'gemini'>[] = [
+  'openrouter',
+  'openai',
+  'anthropic',
+  'groq',
+  'deepseek',
+  'together',
+  'mistral',
+  'custom',
+];
+
+const VALID_PROVIDERS: LlmProviderId[] = [...PUBLIC_THIRD_PARTY_PROVIDERS, 'gemini'];
 
 const PROVIDER_ENV_META: Record<
   LlmProviderId,
-  { envKey: string; label: string; defaultModel: string }
+  { envKey: string; label: string; defaultModel: string; baseUrl?: string }
 > = {
-  gemini: {
-    envKey: 'GEMINI_API_KEY',
-    label: 'Google Gemini',
-    defaultModel: DEFAULT_MODEL,
-  },
   openrouter: {
     envKey: 'OPENROUTER_API_KEY',
     label: 'OpenRouter',
-    defaultModel: process.env.OPENROUTER_MODEL || 'openai/gpt-4o-mini',
+    defaultModel: process.env.OPENROUTER_MODEL || 'openrouter/free',
+    baseUrl: 'https://openrouter.ai/api/v1',
   },
   openai: {
     envKey: 'OPENAI_API_KEY',
     label: 'OpenAI',
     defaultModel: process.env.OPENAI_MODEL || 'gpt-4o-mini',
+    baseUrl: 'https://api.openai.com/v1',
   },
   anthropic: {
     envKey: 'ANTHROPIC_API_KEY',
     label: 'Claude (Anthropic)',
     defaultModel: process.env.ANTHROPIC_MODEL || 'claude-3-5-haiku-latest',
+    baseUrl: 'https://api.anthropic.com/v1',
+  },
+  groq: {
+    envKey: 'GROQ_API_KEY',
+    label: 'Groq',
+    defaultModel: process.env.GROQ_MODEL || 'llama-3.3-70b-versatile',
+    baseUrl: 'https://api.groq.com/openai/v1',
+  },
+  deepseek: {
+    envKey: 'DEEPSEEK_API_KEY',
+    label: 'DeepSeek',
+    defaultModel: process.env.DEEPSEEK_MODEL || 'deepseek-chat',
+    baseUrl: 'https://api.deepseek.com/v1',
+  },
+  together: {
+    envKey: 'TOGETHER_API_KEY',
+    label: 'Together AI',
+    defaultModel: process.env.TOGETHER_MODEL || 'meta-llama/Llama-3.3-70B-Instruct-Turbo',
+    baseUrl: 'https://api.together.xyz/v1',
+  },
+  mistral: {
+    envKey: 'MISTRAL_API_KEY',
+    label: 'Mistral AI',
+    defaultModel: process.env.MISTRAL_MODEL || 'mistral-small-latest',
+    baseUrl: 'https://api.mistral.ai/v1',
+  },
+  custom: {
+    envKey: 'CUSTOM_LLM_API_KEY',
+    label: 'Custom (OpenAI-Compatible)',
+    defaultModel: process.env.CUSTOM_LLM_MODEL || 'gpt-4o-mini',
+    baseUrl: process.env.CUSTOM_LLM_BASE_URL || '',
+  },
+  gemini: {
+    envKey: 'GEMINI_API_KEY',
+    label: 'Google Gemini',
+    defaultModel: DEFAULT_MODEL,
   },
 };
 
@@ -90,32 +149,182 @@ function cleanEnvKey(raw: string | undefined, placeholders: string[] = []): stri
   return apiKey;
 }
 
-function getProviderApiKey(provider: LlmProviderId): string | null {
-  switch (provider) {
-    case 'gemini':
-      return cleanEnvKey(process.env.GEMINI_API_KEY, ['YOUR_GEMINI_API_KEY', 'MY_GEMINI_API_KEY']);
-    case 'openrouter':
-      return cleanEnvKey(process.env.OPENROUTER_API_KEY, ['YOUR_OPENROUTER_API_KEY']);
-    case 'openai':
-      return cleanEnvKey(process.env.OPENAI_API_KEY, ['YOUR_OPENAI_API_KEY']);
-    case 'anthropic':
-      return cleanEnvKey(process.env.ANTHROPIC_API_KEY, ['YOUR_ANTHROPIC_API_KEY']);
+const PROVIDER_PLACEHOLDERS: Record<LlmProviderId, string[]> = {
+  gemini: ['YOUR_GEMINI_API_KEY', 'MY_GEMINI_API_KEY'],
+  openrouter: ['YOUR_OPENROUTER_API_KEY'],
+  openai: ['YOUR_OPENAI_API_KEY'],
+  anthropic: ['YOUR_ANTHROPIC_API_KEY'],
+  groq: ['YOUR_GROQ_API_KEY'],
+  deepseek: ['YOUR_DEEPSEEK_API_KEY'],
+  together: ['YOUR_TOGETHER_API_KEY'],
+  mistral: ['YOUR_MISTRAL_API_KEY'],
+  custom: ['YOUR_CUSTOM_LLM_API_KEY'],
+};
+
+function readDynamicEnvFile(fileName: string): Record<string, string> {
+  try {
+    const filePath = path.join(process.cwd(), fileName);
+    if (!fs.existsSync(filePath)) return {};
+    return dotenv.parse(fs.readFileSync(filePath, 'utf8'));
+  } catch {
+    return {};
   }
 }
 
-function requireProviderApiKey(provider: LlmProviderId): string {
+function readServerKeyVault(): Partial<Record<LlmProviderId | string, string>> {
+  try {
+    const vaultPath = path.join(process.cwd(), '.provider-keys.json');
+    if (!fs.existsSync(vaultPath)) return {};
+    const parsed = JSON.parse(fs.readFileSync(vaultPath, 'utf8'));
+    return parsed && typeof parsed === 'object' ? parsed : {};
+  } catch {
+    return {};
+  }
+}
+
+function getProviderApiKey(provider: LlmProviderId): string | null {
+  const meta = PROVIDER_ENV_META[provider];
+  const placeholders = PROVIDER_PLACEHOLDERS[provider] || [];
+
+  const vault = readServerKeyVault();
+  const envLocal = readDynamicEnvFile('.env.local');
+  const envFile = readDynamicEnvFile('.env');
+
+  const candidates = [
+    process.env[meta.envKey],
+    envLocal[meta.envKey],
+    envFile[meta.envKey],
+    vault[provider],
+    vault[meta.envKey],
+  ];
+
+  for (const candidate of candidates) {
+    const cleaned = cleanEnvKey(typeof candidate === 'string' ? candidate : undefined, placeholders);
+    if (cleaned) return cleaned;
+  }
+
+  return null;
+}
+
+function isGeminiPublicAllowed(): boolean {
+  const envLocal = readDynamicEnvFile('.env.local');
+  const envFile = readDynamicEnvFile('.env');
+  const raw = process.env.ALLOW_GEMINI_PUBLIC ?? envLocal.ALLOW_GEMINI_PUBLIC ?? envFile.ALLOW_GEMINI_PUBLIC;
+  return String(raw || 'true').toLowerCase() !== 'false';
+}
+
+function requireProviderApiKey(provider: LlmProviderId, overrideApiKey?: string): string {
+  const cleanedOverride = cleanEnvKey(overrideApiKey, PROVIDER_PLACEHOLDERS[provider] || []);
+  if (cleanedOverride) {
+    return cleanedOverride;
+  }
+
+  if (provider === 'gemini' && !isGeminiPublicAllowed()) {
+    throw new LlmHttpError(
+      403,
+      'Public Gemini access is disabled on this server. Connect OpenRouter or another AI provider in Settings.'
+    );
+  }
   const key = getProviderApiKey(provider);
   if (!key) {
+    if (provider === 'custom') {
+      return '';
+    }
     const meta = PROVIDER_ENV_META[provider];
     throw new LlmHttpError(
-      503,
-      `${meta.envKey} is not configured. Add ${meta.envKey} in Settings > Secrets (or in your local .env file) to use ${meta.label}.`
+      401,
+      `No API key configured for ${meta.label}. Open Settings → AI Model Provider and connect your ${meta.label} API key.`
     );
   }
   return key;
 }
 
-function resolveLlmConfig(rawConfig?: any): LlmConfig {
+function isPrivateOrBlockedIp(ip: string): boolean {
+  const normalized = ip.toLowerCase();
+  if (net.isIPv4(normalized)) {
+    const parts = normalized.split('.').map(Number);
+    if (parts.length !== 4 || parts.some((n) => Number.isNaN(n))) return true;
+    const [a, b] = parts;
+    if (a === 0 || a === 10 || a === 127) return true;
+    if (a === 169 && b === 254) return true;
+    if (a === 172 && b >= 16 && b <= 31) return true;
+    if (a === 192 && b === 168) return true;
+    if (a === 100 && b >= 64 && b <= 127) return true; // CGNAT
+    if (a >= 224) return true; // multicast/reserved
+    return false;
+  }
+  if (net.isIPv6(normalized)) {
+    if (normalized === '::1' || normalized === '::') return true;
+    if (normalized.startsWith('fe80:') || normalized.startsWith('fc') || normalized.startsWith('fd')) return true;
+    if (normalized.startsWith('::ffff:')) {
+      return isPrivateOrBlockedIp(normalized.slice(7));
+    }
+    return false;
+  }
+  return true;
+}
+
+async function validateCustomBaseUrl(rawUrl: string): Promise<string> {
+  const trimmed = String(rawUrl || '').trim();
+  if (!trimmed) {
+    throw new LlmHttpError(400, 'Please enter a valid HTTPS Base URL for your Custom OpenAI-compatible provider.');
+  }
+
+  let parsed: URL;
+  try {
+    parsed = new URL(trimmed);
+  } catch {
+    throw new LlmHttpError(400, 'Invalid Base URL format. Example: https://api.x.ai/v1');
+  }
+
+  if (parsed.protocol !== 'https:') {
+    throw new LlmHttpError(400, 'Custom provider Base URL must use HTTPS (e.g. https://api.x.ai/v1).');
+  }
+  if (parsed.username || parsed.password) {
+    throw new LlmHttpError(400, 'Base URL must not contain embedded username or password credentials.');
+  }
+
+  const host = parsed.hostname.toLowerCase();
+  if (
+    !host ||
+    host === 'localhost' ||
+    host.endsWith('.local') ||
+    host.endsWith('.internal') ||
+    host === 'metadata.google.internal'
+  ) {
+    throw new LlmHttpError(400, 'Blocked internal or local hostname in Custom Base URL.');
+  }
+
+  if (net.isIP(host)) {
+    if (isPrivateOrBlockedIp(host)) {
+      throw new LlmHttpError(400, 'Private or reserved IP addresses are not permitted for Custom Base URL.');
+    }
+  } else {
+    try {
+      const addresses = await dns.lookup(host, { all: true });
+      if (!addresses || addresses.length === 0) {
+        throw new LlmHttpError(400, `Could not resolve hostname "${host}".`);
+      }
+      for (const addr of addresses) {
+        if (isPrivateOrBlockedIp(addr.address)) {
+          throw new LlmHttpError(400, 'Resolved IP address is private or restricted.');
+        }
+      }
+    } catch (err: any) {
+      if (err instanceof LlmHttpError) throw err;
+      throw new LlmHttpError(400, `Could not resolve Custom Base URL hostname "${host}".`);
+    }
+  }
+
+  return parsed.toString().replace(/\/+$/, '');
+}
+
+function resolveLlmConfig(reqOrRaw?: any): LlmConfig {
+  const isExpressReq = reqOrRaw && typeof reqOrRaw === 'object' && ('headers' in reqOrRaw || 'body' in reqOrRaw);
+  const rawConfig = isExpressReq ? reqOrRaw.body?.llmConfig : reqOrRaw;
+  const headerApiKey = isExpressReq ? String(reqOrRaw.headers?.['x-llm-api-key'] || '').trim() : '';
+  const headerBaseUrl = isExpressReq ? String(reqOrRaw.headers?.['x-llm-base-url'] || '').trim() : '';
+
   const envDefaultProvider = String(process.env.AI_PROVIDER || '').toLowerCase() as LlmProviderId;
   const requestedProvider = String(rawConfig?.provider || '').toLowerCase() as LlmProviderId;
 
@@ -123,20 +332,35 @@ function resolveLlmConfig(rawConfig?: any): LlmConfig {
     ? requestedProvider
     : VALID_PROVIDERS.includes(envDefaultProvider)
       ? envDefaultProvider
-      : 'gemini';
+      : 'openrouter';
 
   const requestedModel = typeof rawConfig?.model === 'string' ? rawConfig.model.trim() : '';
   const model = requestedModel || PROVIDER_ENV_META[provider].defaultModel;
+  const baseUrl =
+    headerBaseUrl ||
+    (typeof rawConfig?.baseUrl === 'string' ? rawConfig.baseUrl.trim() : '') ||
+    PROVIDER_ENV_META[provider].baseUrl ||
+    '';
 
-  return { provider, model };
+  return {
+    provider,
+    model,
+    apiKey: headerApiKey || undefined,
+    baseUrl: baseUrl || undefined,
+  };
+}
+
+function stripReasoningBlocks(rawText: string): string {
+  return String(rawText || '')
+    .replace(/<think>[\s\S]*?<\/think>/gi, '')
+    .replace(/^```(?:json)?\s*/i, '')
+    .replace(/\s*```$/i, '')
+    .trim();
 }
 
 function extractJsonObject<T = any>(rawText: string): T | null {
   if (!rawText) return null;
-  const cleaned = rawText
-    .replace(/^```(?:json)?\s*/i, '')
-    .replace(/\s*```$/i, '')
-    .trim();
+  const cleaned = stripReasoningBlocks(rawText);
 
   try {
     return JSON.parse(cleaned) as T;
@@ -155,10 +379,7 @@ function extractJsonObject<T = any>(rawText: string): T | null {
 
 function extractJsonArray<T = any>(rawText: string): T[] | null {
   if (!rawText) return null;
-  const cleaned = rawText
-    .replace(/^```(?:json)?\s*/i, '')
-    .replace(/\s*```$/i, '')
-    .trim();
+  const cleaned = stripReasoningBlocks(rawText);
 
   try {
     const parsed = JSON.parse(cleaned);
@@ -375,7 +596,7 @@ function formatUpstreamProviderHttpError(
 }
 
 async function callOpenRouter(opts: LlmGenerationOptions): Promise<LlmGenerationResult> {
-  const apiKey = requireProviderApiKey('openrouter');
+  const apiKey = requireProviderApiKey('openrouter', opts.llmConfig.apiKey);
   const { llmConfig, prompt, systemInstruction, responseKind = 'text', useWebSearch, fileAttachment } = opts;
 
   const sysText =
@@ -401,23 +622,25 @@ async function callOpenRouter(opts: LlmGenerationOptions): Promise<LlmGeneration
   if (sysText) messages.push({ role: 'system', content: sysText });
   messages.push({ role: 'user', content: userContent });
 
-  const plugins: any[] = [];
-  if (useWebSearch) {
-    plugins.push({ id: 'web', max_results: 8 });
-  }
-  if (fileAttachment && fileAttachment.mimeType.toLowerCase().includes('pdf')) {
-    plugins.push({ id: 'file-parser', pdf: { engine: 'pdf-text' } });
-  }
+  const isFreeModel = llmConfig.model === 'openrouter/free' || llmConfig.model.endsWith(':free');
 
-  const body: any = {
-    model: llmConfig.model,
-    messages,
-  };
-  if (plugins.length > 0) {
-    body.plugins = plugins;
-  }
+  const executeOpenRouter = async (enableWebPlugin: boolean): Promise<any> => {
+    const plugins: any[] = [];
+    if (enableWebPlugin && useWebSearch && !isFreeModel) {
+      plugins.push({ id: 'web', max_results: 6 });
+    }
+    if (fileAttachment && fileAttachment.mimeType.toLowerCase().includes('pdf')) {
+      plugins.push({ id: 'file-parser', pdf: { engine: 'pdf-text' } });
+    }
 
-  const resp = await callWithRetry(async () => {
+    const body: any = {
+      model: llmConfig.model,
+      messages,
+    };
+    if (plugins.length > 0) {
+      body.plugins = plugins;
+    }
+
     const r = await fetch('https://openrouter.ai/api/v1/chat/completions', {
       method: 'POST',
       headers: {
@@ -431,10 +654,15 @@ async function callOpenRouter(opts: LlmGenerationOptions): Promise<LlmGeneration
 
     if (!r.ok) {
       const errText = await r.text();
+      if (enableWebPlugin && useWebSearch && (r.status === 400 || r.status === 402 || r.status === 404)) {
+        return executeOpenRouter(false);
+      }
       throw formatUpstreamProviderHttpError('openrouter', llmConfig.model, r.status, errText);
     }
     return r.json();
-  });
+  };
+
+  const resp = await callWithRetry(() => executeOpenRouter(Boolean(useWebSearch && !isFreeModel)));
 
   const message = resp?.choices?.[0]?.message;
   let text = '';
@@ -461,8 +689,73 @@ async function callOpenRouter(opts: LlmGenerationOptions): Promise<LlmGeneration
   };
 }
 
+async function callOpenAiCompatible(
+  provider: LlmProviderId,
+  baseUrl: string,
+  opts: LlmGenerationOptions
+): Promise<LlmGenerationResult> {
+  const apiKey = requireProviderApiKey(provider, opts.llmConfig.apiKey);
+  const { llmConfig, prompt, systemInstruction, responseKind = 'text' } = opts;
+
+  const sysText =
+    systemInstruction ||
+    (responseKind !== 'text'
+      ? 'You are a precise JSON generator. Return strictly valid JSON with no markdown prose or commentary outside the JSON.'
+      : undefined);
+
+  const messages: any[] = [];
+  if (sysText) messages.push({ role: 'system', content: sysText });
+  messages.push({ role: 'user', content: prompt });
+
+  const normalizedBase = baseUrl.replace(/\/+$/, '');
+  const endpoint = normalizedBase.endsWith('/chat/completions')
+    ? normalizedBase
+    : `${normalizedBase}/chat/completions`;
+
+  const executeChat = async (includeJsonFormat: boolean): Promise<any> => {
+    const body: any = {
+      model: llmConfig.model,
+      messages,
+    };
+    if (includeJsonFormat && responseKind === 'object') {
+      body.response_format = { type: 'json_object' };
+    }
+
+    const headers: Record<string, string> = {
+      'Content-Type': 'application/json',
+    };
+    if (apiKey) {
+      headers.Authorization = `Bearer ${apiKey}`;
+    }
+
+    const r = await fetch(endpoint, {
+      method: 'POST',
+      headers,
+      body: JSON.stringify(body),
+    });
+
+    if (!r.ok) {
+      const errText = await r.text();
+      if (includeJsonFormat && (r.status === 400 || r.status === 422)) {
+        return executeChat(false);
+      }
+      throw formatUpstreamProviderHttpError(provider, llmConfig.model, r.status, errText);
+    }
+    return r.json();
+  };
+
+  const resp = await callWithRetry(() => executeChat(responseKind === 'object'));
+  const text = resp?.choices?.[0]?.message?.content || '';
+
+  return {
+    text: typeof text === 'string' ? text : '',
+    groundingUrls: [],
+    usedModel: resp?.model || llmConfig.model,
+  };
+}
+
 async function callOpenAI(opts: LlmGenerationOptions): Promise<LlmGenerationResult> {
-  const apiKey = requireProviderApiKey('openai');
+  const apiKey = requireProviderApiKey('openai', opts.llmConfig.apiKey);
   const { llmConfig, prompt, systemInstruction, responseKind = 'text', useWebSearch, fileAttachment } = opts;
 
   const sysText =
@@ -498,96 +791,64 @@ async function callOpenAI(opts: LlmGenerationOptions): Promise<LlmGenerationResu
     if (sysText) payload.instructions = sysText;
     if (useWebSearch) payload.tools = [{ type: 'web_search_preview' }];
 
-    const resp = await callWithRetry(async () => {
-      const r = await fetch('https://api.openai.com/v1/responses', {
-        method: 'POST',
-        headers: {
-          Authorization: `Bearer ${apiKey}`,
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify(payload),
+    try {
+      const resp = await callWithRetry(async () => {
+        const r = await fetch('https://api.openai.com/v1/responses', {
+          method: 'POST',
+          headers: {
+            Authorization: `Bearer ${apiKey}`,
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify(payload),
+        });
+        if (!r.ok) {
+          const errText = await r.text();
+          throw formatUpstreamProviderHttpError('openai', llmConfig.model, r.status, errText);
+        }
+        return r.json();
       });
-      if (!r.ok) {
-        const errText = await r.text();
-        throw formatUpstreamProviderHttpError('openai', llmConfig.model, r.status, errText);
-      }
-      return r.json();
-    });
 
-    let text = typeof resp?.output_text === 'string' ? resp.output_text : '';
-    const groundingUrls: string[] = [];
+      let text = typeof resp?.output_text === 'string' ? resp.output_text : '';
+      const groundingUrls: string[] = [];
 
-    if (Array.isArray(resp?.output)) {
-      for (const item of resp.output) {
-        if (item?.type === 'message' && Array.isArray(item.content)) {
-          for (const part of item.content) {
-            if (!text && part?.type === 'output_text' && typeof part.text === 'string') {
-              text += part.text;
-            }
-            if (Array.isArray(part?.annotations)) {
-              for (const ann of part.annotations) {
-                if (ann?.type === 'url_citation' && typeof ann?.url === 'string') {
-                  groundingUrls.push(ann.url);
+      if (Array.isArray(resp?.output)) {
+        for (const item of resp.output) {
+          if (item?.type === 'message' && Array.isArray(item.content)) {
+            for (const part of item.content) {
+              if (!text && part?.type === 'output_text' && typeof part.text === 'string') {
+                text += part.text;
+              }
+              if (Array.isArray(part?.annotations)) {
+                for (const ann of part.annotations) {
+                  if (ann?.type === 'url_citation' && typeof ann?.url === 'string') {
+                    groundingUrls.push(ann.url);
+                  }
                 }
               }
             }
           }
         }
       }
-    }
 
-    return {
-      text,
-      groundingUrls: Array.from(new Set(groundingUrls)),
-      usedModel: resp?.model || llmConfig.model,
-    };
+      return {
+        text,
+        groundingUrls: Array.from(new Set(groundingUrls)),
+        usedModel: resp?.model || llmConfig.model,
+      };
+    } catch (err: any) {
+      // Fallback to standard Chat Completions if web search tool isn't supported on this model/key
+      if (useWebSearch && !fileAttachment && err instanceof LlmHttpError && (err.status === 400 || err.status === 403)) {
+        return callOpenAiCompatible('openai', 'https://api.openai.com/v1', { ...opts, useWebSearch: false });
+      }
+      throw err;
+    }
   }
 
-  // Standard OpenAI Chat Completions
-  const messages: any[] = [];
-  if (sysText) messages.push({ role: 'system', content: sysText });
-  messages.push({ role: 'user', content: prompt });
-
-  const executeChat = async (includeJsonFormat: boolean) => {
-    const body: any = {
-      model: llmConfig.model,
-      messages,
-    };
-    if (includeJsonFormat && responseKind === 'object') {
-      body.response_format = { type: 'json_object' };
-    }
-
-    const r = await fetch('https://api.openai.com/v1/chat/completions', {
-      method: 'POST',
-      headers: {
-        Authorization: `Bearer ${apiKey}`,
-        'Content-Type': 'application/json',
-      },
-      body: JSON.stringify(body),
-    });
-
-    if (!r.ok) {
-      const errText = await r.text();
-      if (includeJsonFormat && r.status === 400 && errText.toLowerCase().includes('response_format')) {
-        return executeChat(false);
-      }
-      throw formatUpstreamProviderHttpError('openai', llmConfig.model, r.status, errText);
-    }
-    return r.json();
-  };
-
-  const resp = await callWithRetry(() => executeChat(responseKind === 'object'));
-  const text = resp?.choices?.[0]?.message?.content || '';
-
-  return {
-    text: typeof text === 'string' ? text : '',
-    groundingUrls: [],
-    usedModel: resp?.model || llmConfig.model,
-  };
+  return callOpenAiCompatible('openai', 'https://api.openai.com/v1', opts);
 }
 
 async function callAnthropic(opts: LlmGenerationOptions): Promise<LlmGenerationResult> {
-  const apiKey = requireProviderApiKey('anthropic');
+  const apiKey = requireProviderApiKey('anthropic', opts.llmConfig.apiKey);
   const { llmConfig, prompt, systemInstruction, responseKind = 'text', useWebSearch, fileAttachment } = opts;
 
   const sysText =
@@ -620,17 +881,17 @@ async function callAnthropic(opts: LlmGenerationOptions): Promise<LlmGenerationR
   }
   contentParts.push({ type: 'text', text: prompt });
 
-  const body: any = {
-    model: llmConfig.model,
-    max_tokens: 4096,
-    messages: [{ role: 'user', content: contentParts }],
-  };
-  if (sysText) body.system = sysText;
-  if (useWebSearch) {
-    body.tools = [{ type: 'web_search_20250305', name: 'web_search', max_uses: 5 }];
-  }
+  const executeAnthropic = async (enableWebSearch: boolean): Promise<any> => {
+    const body: any = {
+      model: llmConfig.model,
+      max_tokens: 4096,
+      messages: [{ role: 'user', content: contentParts }],
+    };
+    if (sysText) body.system = sysText;
+    if (enableWebSearch) {
+      body.tools = [{ type: 'web_search_20250305', name: 'web_search', max_uses: 5 }];
+    }
 
-  const resp = await callWithRetry(async () => {
     const r = await fetch('https://api.anthropic.com/v1/messages', {
       method: 'POST',
       headers: {
@@ -642,10 +903,15 @@ async function callAnthropic(opts: LlmGenerationOptions): Promise<LlmGenerationR
     });
     if (!r.ok) {
       const errText = await r.text();
+      if (enableWebSearch && (r.status === 400 || r.status === 403 || r.status === 404)) {
+        return executeAnthropic(false);
+      }
       throw formatUpstreamProviderHttpError('anthropic', llmConfig.model, r.status, errText);
     }
     return r.json();
-  });
+  };
+
+  const resp = await callWithRetry(() => executeAnthropic(Boolean(useWebSearch)));
 
   let text = '';
   const groundingUrls: string[] = [];
@@ -678,11 +944,170 @@ async function callAnthropic(opts: LlmGenerationOptions): Promise<LlmGenerationR
   };
 }
 
+interface PublicFeedJob {
+  title: string;
+  company: string;
+  location: string;
+  salary: string;
+  jobType: string;
+  source: string;
+  sourceUrl: string;
+  postedDate: string;
+  description: string;
+  tags: string[];
+}
+
+async function fetchLivePublicJobFeeds(titles: string[], keywords: string[]): Promise<PublicFeedJob[]> {
+  const queryTokens = [...titles, ...keywords]
+    .map((s) => String(s || '').toLowerCase().trim())
+    .filter((s) => s.length >= 2);
+  const searchTerm = encodeURIComponent((titles[0] || keywords[0] || 'software').split(' ').slice(0, 2).join(' '));
+  const tagTerm = encodeURIComponent((keywords[0] || 'dev').toLowerCase().replace(/[^a-z0-9]/g, ''));
+
+  const jobs: PublicFeedJob[] = [];
+
+  const [remotiveRes, arbeitnowRes, jobicyRes] = await Promise.allSettled([
+    fetch(`https://remotive.com/api/remote-jobs?search=${searchTerm}&limit=15`, {
+      signal: AbortSignal.timeout(5500),
+    }).then((r) => (r.ok ? r.json() : null)),
+    fetch('https://www.arbeitnow.com/api/job-board-api', {
+      signal: AbortSignal.timeout(5500),
+    }).then((r) => (r.ok ? r.json() : null)),
+    fetch(`https://jobicy.com/api/v2/remote-jobs?count=15${tagTerm ? `&tag=${tagTerm}` : ''}`, {
+      signal: AbortSignal.timeout(5500),
+    }).then((r) => (r.ok ? r.json() : null)),
+  ]);
+
+  if (remotiveRes.status === 'fulfilled' && Array.isArray(remotiveRes.value?.jobs)) {
+    for (const j of remotiveRes.value.jobs.slice(0, 15)) {
+      jobs.push({
+        title: String(j.title || ''),
+        company: String(j.company_name || ''),
+        location: String(j.candidate_required_location || 'Remote (Worldwide)'),
+        salary: String(j.salary || 'Competitive'),
+        jobType: String(j.job_type || 'Full-time'),
+        source: 'Direct Board',
+        sourceUrl: String(j.url || ''),
+        postedDate: String(j.publication_date || '').slice(0, 10) || 'Recently',
+        description: String(j.description || '')
+          .replace(/<[^>]+>/g, ' ')
+          .replace(/\s+/g, ' ')
+          .trim()
+          .slice(0, 900),
+        tags: Array.isArray(j.tags) ? j.tags.slice(0, 8) : [],
+      });
+    }
+  }
+
+  if (arbeitnowRes.status === 'fulfilled' && Array.isArray(arbeitnowRes.value?.data)) {
+    for (const j of arbeitnowRes.value.data.slice(0, 25)) {
+      jobs.push({
+        title: String(j.title || ''),
+        company: String(j.company_name || ''),
+        location: j.remote ? 'Remote' : String(j.location || 'Hybrid'),
+        salary: 'See listing',
+        jobType: Array.isArray(j.job_types) && j.job_types[0] ? String(j.job_types[0]) : 'Full-time',
+        source: 'Direct Board',
+        sourceUrl: String(j.url || ''),
+        postedDate: 'Recently',
+        description: String(j.description || '')
+          .replace(/<[^>]+>/g, ' ')
+          .replace(/\s+/g, ' ')
+          .trim()
+          .slice(0, 900),
+        tags: Array.isArray(j.tags) ? j.tags.slice(0, 8) : [],
+      });
+    }
+  }
+
+  if (jobicyRes.status === 'fulfilled' && Array.isArray(jobicyRes.value?.jobs)) {
+    for (const j of jobicyRes.value.jobs.slice(0, 15)) {
+      jobs.push({
+        title: String(j.jobTitle || ''),
+        company: String(j.companyName || ''),
+        location: String(j.jobGeo || 'Remote'),
+        salary: j.annualSalaryMin ? `$${j.annualSalaryMin} - $${j.annualSalaryMax || j.annualSalaryMin}` : 'Competitive',
+        jobType: Array.isArray(j.jobType) && j.jobType[0] ? String(j.jobType[0]) : 'Full-time',
+        source: 'Direct Board',
+        sourceUrl: String(j.url || ''),
+        postedDate: String(j.pubDate || '').slice(0, 10) || 'Recently',
+        description: String(j.jobExcerpt || j.jobDescription || '')
+          .replace(/<[^>]+>/g, ' ')
+          .replace(/\s+/g, ' ')
+          .trim()
+          .slice(0, 900),
+        tags: Array.isArray(j.jobIndustry) ? j.jobIndustry.slice(0, 5) : [],
+      });
+    }
+  }
+
+  const scored = jobs
+    .filter((j) => j.title && j.company && j.sourceUrl)
+    .map((j) => {
+      const hay = `${j.title} ${j.description} ${j.tags.join(' ')}`.toLowerCase();
+      const hits = queryTokens.reduce((acc, t) => acc + (hay.includes(t) ? 1 : 0), 0);
+      return { j, hits };
+    })
+    .sort((a, b) => b.hits - a.hits);
+
+  return scored.slice(0, 18).map((x) => x.j);
+}
+
 async function startServer() {
   const app = express();
   const PORT = Number(process.env.PORT) || 3000;
 
+  app.set('trust proxy', 1);
   app.use(express.json({ limit: '10mb' }));
+
+  // Server-side rate limiting & daily AI cap to protect host API keys from runaway public billing
+  const RATE_LIMIT_WINDOW_MS = Math.max(10_000, Number(process.env.RATE_LIMIT_WINDOW_MS) || 60_000);
+  const RATE_LIMIT_MAX_PER_IP = Math.max(1, Number(process.env.RATE_LIMIT_MAX_PER_IP) || 12);
+  const MAX_DAILY_AI_REQUESTS = Math.max(1, Number(process.env.MAX_DAILY_AI_REQUESTS) || 250);
+
+  const ipRequestWindows = new Map<string, number[]>();
+  let dailyUsageDate = new Date().toISOString().slice(0, 10);
+  let dailyAiRequestCount = 0;
+
+  const getDailyUsageStatus = () => {
+    const today = new Date().toISOString().slice(0, 10);
+    if (today !== dailyUsageDate) {
+      dailyUsageDate = today;
+      dailyAiRequestCount = 0;
+    }
+    return {
+      date: dailyUsageDate,
+      usedToday: dailyAiRequestCount,
+      maxDailyRequests: MAX_DAILY_AI_REQUESTS,
+      dailyRemaining: Math.max(0, MAX_DAILY_AI_REQUESTS - dailyAiRequestCount),
+      perIpPerMinute: RATE_LIMIT_MAX_PER_IP,
+    };
+  };
+
+  app.use('/api/agent', (req, res, next) => {
+    const now = Date.now();
+    const usage = getDailyUsageStatus();
+    if (usage.usedToday >= MAX_DAILY_AI_REQUESTS) {
+      return res.status(429).json({
+        success: false,
+        error: `Daily server AI request cap (${MAX_DAILY_AI_REQUESTS}/day) reached to protect host API quota. Try again tomorrow or self-host with your own .env keys.`,
+      });
+    }
+
+    const clientIp = String(req.ip || req.socket.remoteAddress || 'unknown');
+    const recent = (ipRequestWindows.get(clientIp) || []).filter((ts) => now - ts < RATE_LIMIT_WINDOW_MS);
+    if (recent.length >= RATE_LIMIT_MAX_PER_IP) {
+      return res.status(429).json({
+        success: false,
+        error: `Rate limit reached (${RATE_LIMIT_MAX_PER_IP} AI requests/min per user). Please wait a few seconds before trying again.`,
+      });
+    }
+
+    recent.push(now);
+    ipRequestWindows.set(clientIp, recent);
+    dailyAiRequestCount += 1;
+    next();
+  });
 
   // Helper to initialize Google GenAI SDK (Server-Side Only)
   const getGenAI = () => {
@@ -1022,8 +1447,21 @@ async function startServer() {
     if (llmConfig.provider === 'anthropic') {
       return callAnthropic(opts);
     }
+    if (
+      llmConfig.provider === 'groq' ||
+      llmConfig.provider === 'deepseek' ||
+      llmConfig.provider === 'together' ||
+      llmConfig.provider === 'mistral'
+    ) {
+      const base = PROVIDER_ENV_META[llmConfig.provider].baseUrl!;
+      return callOpenAiCompatible(llmConfig.provider, base, opts);
+    }
+    if (llmConfig.provider === 'custom') {
+      const safeBase = await validateCustomBaseUrl(llmConfig.baseUrl || PROVIDER_ENV_META.custom.baseUrl || '');
+      return callOpenAiCompatible('custom', safeBase, opts);
+    }
 
-    // Default: Google Gemini via @google/genai SDK
+    // Internal fallback only if explicitly requested by legacy clients
     const ai = getGenAI();
     const contents: any = opts.fileAttachment
       ? [
@@ -1086,30 +1524,491 @@ async function startServer() {
     };
   }
 
-  // API Health Check (read-only boolean provider availability — never returns secrets)
+  // API Health Check (read-only boolean provider availability & safe usage limits — never returns secrets)
   app.get('/api/health', (_req, res) => {
-    const providers: Record<LlmProviderId, boolean> = {
-      gemini: Boolean(getProviderApiKey('gemini')),
+    const providers: Record<string, boolean> = {
       openrouter: Boolean(getProviderApiKey('openrouter')),
       openai: Boolean(getProviderApiKey('openai')),
       anthropic: Boolean(getProviderApiKey('anthropic')),
+      groq: Boolean(getProviderApiKey('groq')),
+      deepseek: Boolean(getProviderApiKey('deepseek')),
+      together: Boolean(getProviderApiKey('together')),
+      mistral: Boolean(getProviderApiKey('mistral')),
+      custom: Boolean(getProviderApiKey('custom') && PROVIDER_ENV_META.custom.baseUrl),
     };
 
     res.json({
       status: 'ok',
       service: 'AutoApply AI Agent Server',
-      aiConfigured: providers.gemini || providers.openrouter || providers.openai || providers.anthropic,
+      aiConfigured: Object.values(providers).some(Boolean),
       providers,
-      model: DEFAULT_MODEL,
-      decisionModel: DECISION_MODEL,
+      limits: getDailyUsageStatus(),
       timestamp: new Date().toISOString(),
     });
   });
 
-  // 1. Multi-Pass Job Search (3 Passes: Job Boards Grounding -> Direct ATS Grounding -> Deduplication & Verification)
+  // ---------------------------------------------------------------------------
+  // OpenRouter 1-Click OAuth PKCE Flow (no manual API key copying required)
+  // ---------------------------------------------------------------------------
+  interface PendingOpenRouterOAuth {
+    codeVerifier: string;
+    callbackUrl: string;
+    createdAt: number;
+    status: 'pending' | 'completed' | 'error';
+    claimToken?: string;
+    error?: string;
+  }
+  interface ClaimedOpenRouterKey {
+    apiKey: string;
+    maskedHint: string;
+    userId?: string;
+    createdAt: number;
+  }
+
+  const pendingOpenRouterOAuth = new Map<string, PendingOpenRouterOAuth>();
+  const claimedOpenRouterKeys = new Map<string, ClaimedOpenRouterKey>();
+
+  const pruneExpiredOAuth = () => {
+    const now = Date.now();
+    for (const [k, v] of pendingOpenRouterOAuth.entries()) {
+      if (now - v.createdAt > 10 * 60 * 1000) pendingOpenRouterOAuth.delete(k);
+    }
+    for (const [k, v] of claimedOpenRouterKeys.entries()) {
+      if (now - v.createdAt > 5 * 60 * 1000) claimedOpenRouterKeys.delete(k);
+    }
+  };
+
+  const resolvePublicAppOrigin = (requestedOrigin?: unknown): string => {
+    const fallback = (process.env.APP_URL || 'http://localhost:3000').replace(/\/+$/, '');
+    if (typeof requestedOrigin !== 'string' || !requestedOrigin.trim()) return fallback;
+    try {
+      const parsed = new URL(requestedOrigin.trim());
+      if (parsed.protocol === 'https:') {
+        return parsed.origin;
+      }
+      if (parsed.protocol === 'http:' && (parsed.hostname === 'localhost' || parsed.hostname === '127.0.0.1')) {
+        return parsed.origin;
+      }
+    } catch {
+      // Fallback to APP_URL
+    }
+    return fallback;
+  };
+
+  const escapeHtml = (str: string): string =>
+    str
+      .replace(/&/g, '&amp;')
+      .replace(/</g, '&lt;')
+      .replace(/>/g, '&gt;')
+      .replace(/"/g, '&quot;')
+      .replace(/'/g, '&#39;');
+
+  const maskKeyHint = (rawKey: string): string => {
+    const k = rawKey.trim();
+    if (!k) return '';
+    if (k.length <= 10) return '••••••••';
+    return `${k.slice(0, 6)}••••${k.slice(-4)}`;
+  };
+
+  app.post('/api/auth/openrouter/start', (req, res) => {
+    pruneExpiredOAuth();
+    const origin = resolvePublicAppOrigin(req.body?.origin);
+    const state = crypto.randomBytes(16).toString('hex');
+    const codeVerifier = crypto.randomBytes(32).toString('base64url');
+    const codeChallenge = crypto.createHash('sha256').update(codeVerifier).digest('base64url');
+    const callbackUrl = `${origin}/api/auth/openrouter/callback/${state}`;
+
+    pendingOpenRouterOAuth.set(state, {
+      codeVerifier,
+      callbackUrl,
+      createdAt: Date.now(),
+      status: 'pending',
+    });
+
+    const params = new URLSearchParams({
+      callback_url: callbackUrl,
+      code_challenge: codeChallenge,
+      code_challenge_method: 'S256',
+    });
+
+    res.json({
+      success: true,
+      state,
+      callbackUrl,
+      authUrl: `https://openrouter.ai/auth?${params.toString()}`,
+    });
+  });
+
+  const handleOpenRouterCallback = async (req: express.Request, res: express.Response) => {
+    pruneExpiredOAuth();
+    const state = String(req.params.state || '').trim();
+    const code = typeof req.query.code === 'string' ? req.query.code.trim() : '';
+    const entry = state ? pendingOpenRouterOAuth.get(state) : undefined;
+
+    const sendPopupHtml = (
+      ok: boolean,
+      payload: Record<string, string>,
+      heading: string,
+      detail: string
+    ) => {
+      const safeJson = JSON.stringify(payload).replace(/</g, '\\u003c');
+      res.setHeader('Content-Type', 'text/html; charset=utf-8');
+      res.status(ok ? 200 : 400).send(`<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>OpenRouter Connection</title>
+    <style>
+      body { font-family: system-ui, -apple-system, sans-serif; background: #09090b; color: #f4f4f5; display: flex; align-items: center; justify-content: center; min-height: 100vh; margin: 0; padding: 24px; }
+      .card { max-width: 420px; background: #18181b; border: 1px solid #27272a; border-radius: 16px; padding: 24px; text-align: center; }
+      h1 { font-size: 18px; margin: 0 0 8px; }
+      p { font-size: 14px; color: #a1a1aa; margin: 0 0 16px; line-height: 1.5; }
+      button { background: #2563eb; color: #fff; border: 0; border-radius: 10px; padding: 10px 18px; font-size: 14px; font-weight: 600; cursor: pointer; }
+    </style>
+  </head>
+  <body>
+    <div class="card">
+      <h1>${escapeHtml(heading)}</h1>
+      <p>${escapeHtml(detail)}</p>
+      <button type="button" onclick="window.close()">Close Window</button>
+    </div>
+    <script>
+      try {
+        if (window.opener) {
+          window.opener.postMessage(${safeJson}, '*');
+          setTimeout(function () { window.close(); }, 350);
+        }
+      } catch (e) {}
+    </script>
+  </body>
+</html>`);
+    };
+
+    if (!entry || entry.status !== 'pending') {
+      return sendPopupHtml(
+        false,
+        { type: 'OPENROUTER_OAUTH_ERROR', state, message: 'OAuth session expired or invalid. Please retry.' },
+        'Session Expired',
+        'This OpenRouter sign-in session expired or was already used. Close this window and click Connect with OpenRouter again.'
+      );
+    }
+
+    if (!code) {
+      entry.status = 'error';
+      entry.error = 'Authorization was cancelled or no code was returned.';
+      return sendPopupHtml(
+        false,
+        { type: 'OPENROUTER_OAUTH_ERROR', state, message: entry.error },
+        'Authorization Cancelled',
+        entry.error
+      );
+    }
+
+    try {
+      const exchangeResp = await fetch('https://openrouter.ai/api/v1/auth/keys', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          code,
+          code_verifier: entry.codeVerifier,
+          code_challenge_method: 'S256',
+        }),
+        signal: AbortSignal.timeout(10000),
+      });
+
+      if (!exchangeResp.ok) {
+        const errText = await exchangeResp.text();
+        entry.status = 'error';
+        entry.error = `OpenRouter token exchange failed (${exchangeResp.status}).`;
+        console.warn('[openrouter-oauth] Exchange error:', exchangeResp.status, errText.slice(0, 200));
+        return sendPopupHtml(
+          false,
+          { type: 'OPENROUTER_OAUTH_ERROR', state, message: entry.error },
+          'Connection Failed',
+          entry.error
+        );
+      }
+
+      const data = await exchangeResp.json();
+      const apiKey = typeof data?.key === 'string' ? data.key.trim() : '';
+      if (!apiKey) {
+        entry.status = 'error';
+        entry.error = 'OpenRouter did not return a user key.';
+        return sendPopupHtml(
+          false,
+          { type: 'OPENROUTER_OAUTH_ERROR', state, message: entry.error },
+          'Connection Failed',
+          entry.error
+        );
+      }
+
+      const claimToken = crypto.randomBytes(24).toString('hex');
+      claimedOpenRouterKeys.set(claimToken, {
+        apiKey,
+        maskedHint: maskKeyHint(apiKey),
+        userId: typeof data?.user_id === 'string' ? data.user_id : undefined,
+        createdAt: Date.now(),
+      });
+
+      entry.status = 'completed';
+      entry.claimToken = claimToken;
+
+      return sendPopupHtml(
+        true,
+        { type: 'OPENROUTER_OAUTH_SUCCESS', state, claimToken },
+        'OpenRouter Connected',
+        'Your OpenRouter account is connected to AutoApply AI. You can close this window.'
+      );
+    } catch (err: any) {
+      entry.status = 'error';
+      entry.error = err?.message || 'Failed to complete OpenRouter authorization.';
+      return sendPopupHtml(
+        false,
+        { type: 'OPENROUTER_OAUTH_ERROR', state, message: entry.error },
+        'Connection Error',
+        entry.error
+      );
+    }
+  };
+
+  app.get(['/api/auth/openrouter/callback/:state', '/api/auth/openrouter/callback/:state/'], handleOpenRouterCallback);
+
+  app.get('/api/auth/openrouter/poll/:state', (req, res) => {
+    pruneExpiredOAuth();
+    const state = String(req.params.state || '').trim();
+    const entry = state ? pendingOpenRouterOAuth.get(state) : undefined;
+    if (!entry) {
+      return res.json({ status: 'expired' });
+    }
+    if (entry.status === 'completed' && entry.claimToken) {
+      return res.json({ status: 'completed', claimToken: entry.claimToken });
+    }
+    if (entry.status === 'error') {
+      return res.json({ status: 'error', error: entry.error || 'OAuth failed.' });
+    }
+    return res.json({ status: 'pending' });
+  });
+
+  app.post('/api/auth/openrouter/claim', (req, res) => {
+    pruneExpiredOAuth();
+    const claimToken = typeof req.body?.claimToken === 'string' ? req.body.claimToken.trim() : '';
+    const state = typeof req.body?.state === 'string' ? req.body.state.trim() : '';
+
+    if (!claimToken) {
+      return res.status(400).json({ success: false, error: 'Missing claim token.' });
+    }
+
+    const claimed = claimedOpenRouterKeys.get(claimToken);
+    if (!claimed) {
+      return res.status(404).json({ success: false, error: 'OAuth token expired or already claimed.' });
+    }
+
+    claimedOpenRouterKeys.delete(claimToken);
+    if (state) pendingOpenRouterOAuth.delete(state);
+
+    return res.json({
+      success: true,
+      provider: 'openrouter',
+      apiKey: claimed.apiKey,
+      maskedHint: claimed.maskedHint,
+      userId: claimed.userId,
+    });
+  });
+
+  // Fetch live available models for a provider (supports OpenRouter, OpenAI, Groq, Together, Mistral, Custom)
+  app.post('/api/providers/models', async (req, res) => {
+    const llmConfig = resolveLlmConfig(req);
+    try {
+      const apiKey = cleanEnvKey(llmConfig.apiKey) || getProviderApiKey(llmConfig.provider) || '';
+
+      if (llmConfig.provider === 'openrouter') {
+        const headers: Record<string, string> = {};
+        if (apiKey) headers.Authorization = `Bearer ${apiKey}`;
+        const r = await fetch('https://openrouter.ai/api/v1/models', {
+          headers,
+          signal: AbortSignal.timeout(8000),
+        });
+        if (!r.ok) {
+          const text = await r.text();
+          throw formatUpstreamProviderHttpError('openrouter', llmConfig.model, r.status, text);
+        }
+        const json = await r.json();
+        const rawList: any[] = Array.isArray(json?.data) ? json.data : [];
+        const models = rawList
+          .filter((m) => m?.id && !String(m.id).toLowerCase().includes('gemini'))
+          .map((m) => {
+            const promptPrice = Number(m?.pricing?.prompt ?? -1);
+            const completionPrice = Number(m?.pricing?.completion ?? -1);
+            const isFree =
+              String(m.id) === 'openrouter/free' ||
+              String(m.id).endsWith(':free') ||
+              (promptPrice === 0 && completionPrice === 0);
+            return {
+              id: String(m.id),
+              label: String(m.name || m.id),
+              note: isFree ? 'Free' : m.context_length ? `${Math.round(m.context_length / 1000)}k ctx` : '',
+              isFree,
+            };
+          })
+          .sort((a, b) => Number(b.isFree) - Number(a.isFree));
+
+        return res.json({ success: true, provider: 'openrouter', models });
+      }
+
+      if (
+        llmConfig.provider === 'openai' ||
+        llmConfig.provider === 'groq' ||
+        llmConfig.provider === 'together' ||
+        llmConfig.provider === 'mistral' ||
+        llmConfig.provider === 'custom'
+      ) {
+        const base =
+          llmConfig.provider === 'custom'
+            ? await validateCustomBaseUrl(llmConfig.baseUrl || '')
+            : PROVIDER_ENV_META[llmConfig.provider].baseUrl!;
+
+        if (!apiKey && llmConfig.provider !== 'custom') {
+          throw new LlmHttpError(401, `Enter your ${PROVIDER_ENV_META[llmConfig.provider].label} API key first.`);
+        }
+
+        const headers: Record<string, string> = {};
+        if (apiKey) headers.Authorization = `Bearer ${apiKey}`;
+        const r = await fetch(`${base.replace(/\/+$/, '')}/models`, {
+          headers,
+          signal: AbortSignal.timeout(8000),
+        });
+        if (!r.ok) {
+          const text = await r.text();
+          throw formatUpstreamProviderHttpError(llmConfig.provider, llmConfig.model, r.status, text);
+        }
+        const json = await r.json();
+        const rawList: any[] = Array.isArray(json?.data) ? json.data : Array.isArray(json) ? json : [];
+        const models = rawList
+          .filter((m) => m?.id)
+          .slice(0, 120)
+          .map((m) => ({
+            id: String(m.id),
+            label: String(m.name || m.id),
+            note: m.owned_by ? String(m.owned_by) : undefined,
+          }));
+        return res.json({ success: true, provider: llmConfig.provider, models });
+      }
+
+      return res.json({ success: true, provider: llmConfig.provider, models: [] });
+    } catch (error: any) {
+      const formatted = formatLlmError(llmConfig.provider, llmConfig.model, error);
+      res.status(formatted.status).json({ success: false, error: formatted.message });
+    }
+  });
+
+  // Test & verify connection for any third-party AI provider
+  app.post('/api/providers/test', async (req, res) => {
+    const llmConfig = resolveLlmConfig(req);
+    try {
+      const apiKey = requireProviderApiKey(llmConfig.provider, llmConfig.apiKey);
+
+      if (llmConfig.provider === 'openrouter') {
+        const r = await fetch('https://openrouter.ai/api/v1/auth/key', {
+          headers: { Authorization: `Bearer ${apiKey}` },
+          signal: AbortSignal.timeout(8000),
+        });
+        if (!r.ok) {
+          const errText = await r.text();
+          throw formatUpstreamProviderHttpError('openrouter', llmConfig.model, r.status, errText);
+        }
+        const data = await r.json();
+        const isFreeTier = data?.data?.is_free_tier;
+        const label = data?.data?.label ? ` (${data.data.label})` : '';
+        return res.json({
+          success: true,
+          provider: 'openrouter',
+          message: `OpenRouter connected${label}${isFreeTier ? ' · Free tier ready' : ''}.`,
+        });
+      }
+
+      if (llmConfig.provider === 'anthropic') {
+        const r = await fetch('https://api.anthropic.com/v1/messages', {
+          method: 'POST',
+          headers: {
+            'x-api-key': apiKey,
+            'anthropic-version': '2023-06-01',
+            'content-type': 'application/json',
+          },
+          body: JSON.stringify({
+            model: llmConfig.model,
+            max_tokens: 5,
+            messages: [{ role: 'user', content: 'Hi' }],
+          }),
+          signal: AbortSignal.timeout(10000),
+        });
+        if (!r.ok) {
+          const errText = await r.text();
+          throw formatUpstreamProviderHttpError('anthropic', llmConfig.model, r.status, errText);
+        }
+        return res.json({
+          success: true,
+          provider: 'anthropic',
+          message: `Claude (Anthropic) connected with ${llmConfig.model}.`,
+        });
+      }
+
+      const base =
+        llmConfig.provider === 'custom'
+          ? await validateCustomBaseUrl(llmConfig.baseUrl || '')
+          : PROVIDER_ENV_META[llmConfig.provider].baseUrl!;
+
+      const headers: Record<string, string> = {};
+      if (apiKey) headers.Authorization = `Bearer ${apiKey}`;
+
+      const modelsResp = await fetch(`${base.replace(/\/+$/, '')}/models`, {
+        headers,
+        signal: AbortSignal.timeout(8000),
+      });
+
+      if (modelsResp.ok) {
+        return res.json({
+          success: true,
+          provider: llmConfig.provider,
+          message: `${PROVIDER_ENV_META[llmConfig.provider].label} connected and verified.`,
+        });
+      }
+
+      if (modelsResp.status === 401 || modelsResp.status === 403) {
+        const errText = await modelsResp.text();
+        throw formatUpstreamProviderHttpError(llmConfig.provider, llmConfig.model, modelsResp.status, errText);
+      }
+
+      // Fallback ping for custom endpoints that don't expose GET /models
+      const pingResp = await fetch(`${base.replace(/\/+$/, '')}/chat/completions`, {
+        method: 'POST',
+        headers: { ...headers, 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          model: llmConfig.model,
+          max_tokens: 5,
+          messages: [{ role: 'user', content: 'Reply OK' }],
+        }),
+        signal: AbortSignal.timeout(10000),
+      });
+      if (!pingResp.ok) {
+        const errText = await pingResp.text();
+        throw formatUpstreamProviderHttpError(llmConfig.provider, llmConfig.model, pingResp.status, errText);
+      }
+
+      return res.json({
+        success: true,
+        provider: llmConfig.provider,
+        message: `${PROVIDER_ENV_META[llmConfig.provider].label} connected with ${llmConfig.model}.`,
+      });
+    } catch (error: any) {
+      const formatted = formatLlmError(llmConfig.provider, llmConfig.model, error);
+      res.status(formatted.status).json({ success: false, error: formatted.message });
+    }
+  });
+
+  // 1. Multi-Pass Job Search (3 Passes: Live Public Feeds + Grounded Search -> Direct ATS -> Deduplication & Verification)
   app.post('/api/agent/search-indeed-jobs', async (req, res) => {
     const startedAt = Date.now();
-    const llmConfig = resolveLlmConfig(req.body?.llmConfig);
+    const llmConfig = resolveLlmConfig(req);
     try {
       const {
         titles = ['Junior Software Engineer', 'Frontend Developer'],
@@ -1128,7 +2027,7 @@ async function startServer() {
       } = req.body || {};
 
       // Validate key upfront before running multi-pass search
-      requireProviderApiKey(llmConfig.provider);
+      requireProviderApiKey(llmConfig.provider, llmConfig.apiKey);
 
       const dateFilterLabel =
         datePosted === '24h'
@@ -1188,7 +2087,7 @@ SEARCH PARAMETERS:
 - Sort Priority: ${sortBy === 'date' ? 'Newest Listings First' : 'Highest Relevance'}`;
 
       const itemSchemaDescription = `
-Return strictly a valid JSON array of up to 5 distinct job listings (no markdown prose outside JSON):
+Return strictly a valid JSON array of up to 6 distinct job listings (no markdown prose outside JSON):
 [
   {
     "title": "Exact job title",
@@ -1197,8 +2096,8 @@ Return strictly a valid JSON array of up to 5 distinct job listings (no markdown
     "salary": "Salary range or Competitive",
     "jobType": "Full-time Remote",
     "experienceReq": "Entry Level / 0-2 Yrs",
-    "source": "Indeed | LinkedIn | Glassdoor | Company Careers",
-    "sourceUrl": "Direct URL to listing from grounded results",
+    "source": "Indeed | LinkedIn | Glassdoor | Company Careers | Direct Board",
+    "sourceUrl": "Direct URL to listing from live feed or grounded results",
     "postedDate": "e.g. 2 days ago",
     "description": "Clear 2-paragraph summary of responsibilities and qualifications",
     "requiredSkills": ["Skill 1", "Skill 2", "Skill 3"],
@@ -1214,56 +2113,102 @@ Return strictly a valid JSON array of up to 5 distinct job listings (no markdown
         return status === 401 || status === 402 || status === 403 || status === 404 || status === 429 || status === 503;
       };
 
+      const hasNativeSearch =
+        (llmConfig.provider === 'openai' || llmConfig.provider === 'anthropic') ||
+        (llmConfig.provider === 'openrouter' &&
+          llmConfig.model !== 'openrouter/free' &&
+          !llmConfig.model.endsWith(':free'));
+
+      // Fetch live public job feeds in parallel so every third-party provider has real active listings
+      const publicFeedJobs = await fetchLivePublicJobFeeds(
+        Array.isArray(titles) ? titles : [],
+        Array.isArray(keywords) ? keywords : []
+      );
+      const feedUrls = publicFeedJobs.map((j) => j.sourceUrl).filter(Boolean);
+
       let passesExecuted = 0;
       let pass1Jobs: any[] = [];
       let pass2Jobs: any[] = [];
-      const collectedUrls: string[] = [];
+      const collectedUrls: string[] = [...feedUrls];
 
-      // PASS 1: Major Job Boards Grounded Search
+      const liveFeedContext =
+        publicFeedJobs.length > 0
+          ? `\nLIVE ACTIVE JOB FEED RESULTS (${publicFeedJobs.length} real openings fetched right now):\n${JSON.stringify(
+              publicFeedJobs,
+              null,
+              2
+            )}\nPrioritize and select the best-matching real listings from these live openings (preserving their exact sourceUrl), plus any additional verified openings.`
+          : '';
+
+      // PASS 1: Major Job Boards & Live Feed Discovery
       const pass1Prompt = `
 You are Pass 1 of a multi-stage AI Job Hunting Agent.
-Use live web search specifically across major job boards (Indeed, LinkedIn Jobs, Glassdoor, WeWorkRemotely, RemoteOK, Wellfound) to discover active job postings matching these parameters:
+Identify and rank active job postings matching these parameters:
 ${sharedFiltersBlock}
+${liveFeedContext}
 ${itemSchemaDescription}`;
 
       const pass1Resp = await runLlmGeneration({
         llmConfig,
         prompt: pass1Prompt,
         responseKind: 'array',
-        useWebSearch: true,
+        useWebSearch: hasNativeSearch,
         allowGeminiFallback: false,
       });
       passesExecuted += 1;
       collectedUrls.push(...pass1Resp.groundingUrls);
       pass1Jobs = extractJsonArray(pass1Resp.text) || [];
 
-      // PASS 2: Direct ATS & Company Career Portals Grounded Search
-      try {
-        const pass2Prompt = `
+      // PASS 2: Direct ATS & Company Career Portals Search (when provider supports live search)
+      if (hasNativeSearch) {
+        try {
+          const pass2Prompt = `
 You are Pass 2 of a multi-stage AI Job Hunting Agent focusing on DIRECT COMPANY CAREER PORTALS & ATS BOARDS.
-Use live web search targeting Greenhouse (boards.greenhouse.io), Lever (jobs.lever.co), Ashby (jobs.ashbyhq.com), Workable, and official company /careers pages—avoiding duplicate listings already generic to aggregators.
+Use live web search targeting Greenhouse (boards.greenhouse.io), Lever (jobs.lever.co), Ashby (jobs.ashbyhq.com), Workable, and official company /careers pages—avoiding duplicate listings.
 ${sharedFiltersBlock}
 ${itemSchemaDescription}`;
 
-        const pass2Resp = await runLlmGeneration({
-          llmConfig,
-          prompt: pass2Prompt,
-          responseKind: 'array',
-          useWebSearch: true,
-          allowGeminiFallback: false,
-        });
-        passesExecuted += 1;
-        collectedUrls.push(...pass2Resp.groundingUrls);
-        pass2Jobs = extractJsonArray(pass2Resp.text) || [];
-      } catch (pass2Error: any) {
-        if (isFatalAuthOrQuotaError(pass2Error)) {
-          throw pass2Error;
+          const pass2Resp = await runLlmGeneration({
+            llmConfig,
+            prompt: pass2Prompt,
+            responseKind: 'array',
+            useWebSearch: true,
+            allowGeminiFallback: false,
+          });
+          passesExecuted += 1;
+          collectedUrls.push(...pass2Resp.groundingUrls);
+          pass2Jobs = extractJsonArray(pass2Resp.text) || [];
+        } catch (pass2Error: any) {
+          if (isFatalAuthOrQuotaError(pass2Error)) {
+            throw pass2Error;
+          }
+          console.warn('Pass 2 ATS search non-fatal warning:', pass2Error?.message || pass2Error);
         }
-        console.warn('Pass 2 ATS search non-fatal warning:', pass2Error?.message || pass2Error);
       }
 
       const uniqueSourceUrls = Array.from(new Set(collectedUrls));
-      const combinedCandidates = [...pass1Jobs, ...pass2Jobs];
+      let combinedCandidates = [...pass1Jobs, ...pass2Jobs];
+
+      // If LLM formatting returned empty but public feeds succeeded, use public feed items directly
+      if (combinedCandidates.length === 0 && publicFeedJobs.length > 0) {
+        combinedCandidates = publicFeedJobs.slice(0, 6).map((j) => ({
+          title: j.title,
+          company: j.company,
+          location: j.location,
+          salary: j.salary,
+          jobType: j.jobType,
+          experienceReq: expFilterLabel,
+          source: j.source,
+          sourceUrl: j.sourceUrl,
+          postedDate: j.postedDate,
+          description: j.description,
+          requiredSkills: j.tags.length > 0 ? j.tags : Array.isArray(keywords) ? keywords.slice(0, 4) : [],
+          companyDomain: '',
+          matchScore: 82,
+          matchReasoning: 'Matched from live remote/tech job feeds.',
+          applyMethod: 'company_portal',
+        }));
+      }
 
       if (combinedCandidates.length === 0) {
         return res.status(502).json({
@@ -1275,12 +2220,12 @@ ${itemSchemaDescription}`;
 
       // PASS 3: Consolidation, Deduplication, Strict Filter Audit & Fit Scoring
       let finalVerifiedJobs: any[] = combinedCandidates;
-      let auditSummary = `Consolidated ${combinedCandidates.length} candidates across ${passesExecuted} grounded search passes (${llmConfig.provider}:${llmConfig.model}).`;
+      let auditSummary = `Consolidated ${combinedCandidates.length} candidates across ${passesExecuted} search pass(es) (${llmConfig.provider}:${llmConfig.model}).`;
 
       try {
         const pass3Prompt = `
-You are Pass 3 (Verification & Deduplication Auditor) of a 3-stage Job Search Agent.
-Review the combined job candidates collected from Pass 1 (Job Boards) and Pass 2 (Direct ATS Portals), plus the verified grounding URLs.
+You are Pass 3 (Verification & Deduplication Auditor) of a Job Search Agent.
+Review the combined job candidates and verified URLs.
 
 CANDIDATE & FILTER RULES TO ENFORCE:
 ${sharedFiltersBlock}
@@ -1295,8 +2240,8 @@ TASKS:
 1. Deduplicate any overlapping roles (same company + same/near-identical role title).
 2. Remove any listing from excluded companies: ${excludedText}.
 3. ${nonVoiceOnly ? 'Strictly remove any cold-calling, telemarketing, or phone-support roles.' : 'Keep standard roles.'}
-4. ${locationType === 'remote_only' ? 'Remove strictly onsite or US-only locked roles that conflict with Remote/Worldwide.' : 'Keep location-aligned roles.'}
-5. Prefer verified grounding URLs where matching; preserve realistic source names and clean 2-paragraph descriptions.
+4. ${locationType === 'remote_only' ? 'Remove strictly onsite roles that conflict with Remote/Worldwide.' : 'Keep location-aligned roles.'}
+5. Preserve verified sourceUrls; provide clean 2-paragraph descriptions and accurate requiredSkills.
 6. Rank the best 5 to 8 verified listings according to ${sortBy === 'date' ? 'newest postedDate first' : 'highest matchScore first'}.
 
 Return strictly a valid JSON object matching this exact schema (no markdown prose):
@@ -1310,7 +2255,7 @@ Return strictly a valid JSON object matching this exact schema (no markdown pros
       "salary": "Salary range or Competitive",
       "jobType": "Full-time Remote",
       "experienceReq": "Entry Level",
-      "source": "Indeed | LinkedIn | Glassdoor | Company Careers",
+      "source": "Indeed | LinkedIn | Glassdoor | Company Careers | Direct Board",
       "sourceUrl": "Direct URL",
       "postedDate": "e.g. 2 days ago",
       "description": "Clear 2-paragraph summary",
@@ -1327,35 +2272,6 @@ Return strictly a valid JSON object matching this exact schema (no markdown pros
           llmConfig,
           prompt: pass3Prompt,
           responseKind: 'object',
-          geminiSchema: {
-            type: Type.OBJECT,
-            properties: {
-              auditSummary: { type: Type.STRING },
-              verifiedJobs: {
-                type: Type.ARRAY,
-                items: {
-                  type: Type.OBJECT,
-                  properties: {
-                    title: { type: Type.STRING },
-                    company: { type: Type.STRING },
-                    location: { type: Type.STRING },
-                    salary: { type: Type.STRING },
-                    jobType: { type: Type.STRING },
-                    experienceReq: { type: Type.STRING },
-                    source: { type: Type.STRING },
-                    sourceUrl: { type: Type.STRING },
-                    postedDate: { type: Type.STRING },
-                    description: { type: Type.STRING },
-                    requiredSkills: { type: Type.ARRAY, items: { type: Type.STRING } },
-                    companyDomain: { type: Type.STRING },
-                    matchScore: { type: Type.NUMBER },
-                    matchReasoning: { type: Type.STRING },
-                    applyMethod: { type: Type.STRING },
-                  },
-                },
-              },
-            },
-          },
         });
 
         passesExecuted += 1;
@@ -1375,7 +2291,7 @@ Return strictly a valid JSON object matching this exact schema (no markdown pros
         console.warn('Pass 3 consolidation fallback to combined results:', pass3Error?.message || pass3Error);
       }
 
-      let enrichedJobs = finalVerifiedJobs.slice(0, 8).map((j: any, idx: number) => ({
+      const enrichedJobs = finalVerifiedJobs.slice(0, 8).map((j: any, idx: number) => ({
         id: `job_search_${Date.now()}_${idx}`,
         title: j.title || 'Open Role',
         company: j.company || 'Company',
@@ -1383,7 +2299,7 @@ Return strictly a valid JSON object matching this exact schema (no markdown pros
         salary: j.salary || 'Competitive',
         jobType: j.jobType || 'Full-time',
         experienceReq: j.experienceReq || expFilterLabel,
-        source: j.source || 'Indeed',
+        source: j.source || 'Direct Board',
         sourceUrl: j.sourceUrl || uniqueSourceUrls[idx] || uniqueSourceUrls[0] || 'https://www.indeed.com',
         postedDate: j.postedDate || 'Recently',
         description: j.description || '',
@@ -1396,29 +2312,10 @@ Return strictly a valid JSON object matching this exact schema (no markdown pros
         discoveredAt: new Date().toISOString(),
       }));
 
-      // Calibrate match scores & compliance flags with gemini-decision-1 (0 output tokens) when Gemini key is available
-      if (getProviderApiKey('gemini') && enrichedJobs.length > 0) {
-        try {
-          enrichedJobs = await batchScreenJobsWithDecisionModel(enrichedJobs, {
-            fullName: 'Candidate',
-            experienceLevel,
-            skills: keywords,
-            customBio: userProfileSummary,
-          });
-          enrichedJobs.sort((a: any, b: any) =>
-            sortBy === 'date' ? 0 : (b.matchScore || 0) - (a.matchScore || 0)
-          );
-          auditSummary = `${auditSummary} Calibrated with ${DECISION_MODEL}.`;
-        } catch (decisionErr: any) {
-          console.warn(`[search-indeed-jobs] Decision model enrichment skipped: ${decisionErr?.message || decisionErr}`);
-        }
-      }
-
       res.json({
         success: true,
         provider: llmConfig.provider,
         model: llmConfig.model,
-        decisionModel: getProviderApiKey('gemini') ? DECISION_MODEL : null,
         jobs: enrichedJobs,
         groundingUrls: uniqueSourceUrls,
         searchStats: {
@@ -1437,25 +2334,116 @@ Return strictly a valid JSON object matching this exact schema (no markdown pros
     }
   });
 
-  // 1d. Calibrated Job Pre-Screening via Google Decisions API (gemini-decision-1, 0 output tokens)
+  // 1d. Calibrated Job Fit Screening via Active Third-Party Provider
   app.post('/api/agent/decision-evaluate-jobs', async (req, res) => {
+    const llmConfig = resolveLlmConfig(req);
     try {
       const { job, jobs, userProfile } = req.body || {};
 
       if (job) {
-        const evalResult = await evaluateJobWithDecisionModel(job, userProfile);
+        const prompt = `
+Evaluate candidate fit for this job listing on a 0-100 scale across four rubrics.
+CANDIDATE: ${JSON.stringify({
+          experienceLevel: userProfile?.experienceLevel || 'entry',
+          yearsExperience: userProfile?.yearsExperience || 0,
+          skills: userProfile?.skills || [],
+          customBio: userProfile?.customBio || '',
+        })}
+JOB: ${JSON.stringify({
+          title: job?.title || '',
+          company: job?.company || '',
+          location: job?.location || '',
+          experienceReq: job?.experienceReq || '',
+          requiredSkills: job?.requiredSkills || [],
+          description: String(job?.description || '').slice(0, 3000),
+        })}
+
+Return strictly valid JSON:
+{
+  "overallScore": 84,
+  "scoreBreakdown": {
+    "skillsMatchScore": 85,
+    "experienceMatchScore": 80,
+    "educationMatchScore": 85,
+    "domainKnowledgeScore": 82
+  },
+  "shouldApplyProbability": 85,
+  "confidence": 88,
+  "seniorityTrack": "entry"
+}`;
+        const response = await runLlmGeneration({ llmConfig, prompt, responseKind: 'object' });
+        const parsed = extractJsonObject(response.text);
+        if (!parsed) {
+          return res.status(502).json({ success: false, error: 'Could not calibrate job fit.' });
+        }
         return res.json({
           success: true,
-          model: DECISION_MODEL,
-          ...evalResult,
+          model: response.usedModel,
+          overallScore: parsed.overallScore ?? job.matchScore ?? 80,
+          scoreBreakdown: parsed.scoreBreakdown,
+          decisionCalibration: {
+            model: response.usedModel,
+            shouldApplyProbability: parsed.shouldApplyProbability ?? parsed.overallScore ?? 80,
+            confidence: parsed.confidence ?? 85,
+            seniorityTrack: parsed.seniorityTrack || 'entry',
+          },
         });
       }
 
       if (Array.isArray(jobs) && jobs.length > 0) {
-        const screenedJobs = await batchScreenJobsWithDecisionModel(jobs, userProfile);
+        const compactJobs = jobs.slice(0, 12).map((j: any, idx: number) => ({
+          index: idx,
+          title: j.title,
+          company: j.company,
+          location: j.location,
+          requiredSkills: j.requiredSkills || [],
+          description: String(j.description || '').slice(0, 800),
+        }));
+        const prompt = `
+Score each job (0-100) for this candidate and estimate apply fit probability (0-100) and confidence (0-100).
+CANDIDATE: ${JSON.stringify({
+          experienceLevel: userProfile?.experienceLevel || 'entry',
+          yearsExperience: userProfile?.yearsExperience || 0,
+          skills: userProfile?.skills || [],
+          customBio: userProfile?.customBio || '',
+        })}
+JOBS:
+${JSON.stringify(compactJobs, null, 2)}
+
+Return strictly a valid JSON array matching each index:
+[
+  { "index": 0, "matchScore": 86, "shouldApplyProbability": 88, "confidence": 85 }
+]`;
+        const response = await runLlmGeneration({ llmConfig, prompt, responseKind: 'array' });
+        const scores = extractJsonArray<{
+          index: number;
+          matchScore: number;
+          shouldApplyProbability?: number;
+          confidence?: number;
+        }>(response.text);
+
+        const scoreMap = new Map((scores || []).map((s) => [Number(s.index), s]));
+        const screenedJobs = jobs.map((j: any, idx: number) => {
+          const item = scoreMap.get(idx);
+          if (!item) return j;
+          const calibratedScore = Math.min(100, Math.max(0, Math.round(Number(item.matchScore) || j.matchScore || 75)));
+          return {
+            ...j,
+            matchScore: calibratedScore,
+            decisionCalibration: {
+              model: response.usedModel,
+              shouldApplyProbability: Math.min(
+                100,
+                Math.max(0, Math.round(Number(item.shouldApplyProbability) || calibratedScore))
+              ),
+              confidence: Math.min(100, Math.max(0, Math.round(Number(item.confidence) || 85))),
+            },
+          };
+        });
+
         return res.json({
           success: true,
-          model: DECISION_MODEL,
+          model: response.usedModel,
           jobs: screenedJobs,
         });
       }
@@ -1465,15 +2453,15 @@ Return strictly a valid JSON object matching this exact schema (no markdown pros
         error: 'Provide a job object or non-empty jobs array to evaluate.',
       });
     } catch (error: any) {
-      const formatted = formatLlmError('gemini', DECISION_MODEL, error);
-      console.warn(`[decision-evaluate-jobs] ${formatted.status}: ${formatted.message}`);
+      const formatted = formatLlmError(llmConfig.provider, llmConfig.model, error);
+      console.warn(`[decision-evaluate-jobs] (${llmConfig.provider}) ${formatted.status}: ${formatted.message}`);
       res.status(formatted.status).json({ success: false, error: formatted.message });
     }
   });
 
   // 1a. Intelligent Keyword & Target Role Suggestions from Candidate CV Data
   app.post('/api/agent/suggest-keywords', async (req, res) => {
-    const llmConfig = resolveLlmConfig(req.body?.llmConfig);
+    const llmConfig = resolveLlmConfig(req);
     try {
       const { userProfile, currentTitles = [], currentKeywords = [] } = req.body || {};
 
@@ -1554,7 +2542,7 @@ Return strictly a valid JSON object matching this exact shape (no markdown prose
 
   // 1b. Parse Uploaded CV Document (PDF / DOCX / TXT / MD)
   app.post('/api/agent/parse-cv-file', async (req, res) => {
-    const llmConfig = resolveLlmConfig(req.body?.llmConfig);
+    const llmConfig = resolveLlmConfig(req);
     try {
       const { fileName = 'resume', fileTextContent, fileBase64, mimeType } = req.body || {};
       const lowerName = String(fileName).toLowerCase();
@@ -1620,12 +2608,17 @@ Return strictly a valid JSON object matching this exact shape (no markdown prose
 
       let extractedText = fileTextContent || '';
 
+      const cleanBase64 = fileBase64
+        ? fileBase64.includes(',')
+          ? fileBase64.split(',')[1]
+          : fileBase64
+        : '';
+
       // Extract plain text from .docx before sending to LLM
       if (
-        fileBase64 &&
+        cleanBase64 &&
         (lowerName.endsWith('.docx') || String(mimeType || '').includes('wordprocessingml'))
       ) {
-        const cleanBase64 = fileBase64.includes(',') ? fileBase64.split(',')[1] : fileBase64;
         const buffer = Buffer.from(cleanBase64, 'base64');
         const docxResult = await mammoth.extractRawText({ buffer });
         extractedText = docxResult.value || '';
@@ -1635,13 +2628,39 @@ Return strictly a valid JSON object matching this exact shape (no markdown prose
             error: 'Could not extract readable text from the uploaded .docx file.',
           });
         }
+      } else if (
+        !extractedText &&
+        cleanBase64 &&
+        (lowerName.endsWith('.pdf') || String(mimeType || '').toLowerCase().includes('pdf'))
+      ) {
+        // Extract plain text from PDF so every third-party model (Groq, DeepSeek, OpenRouter free, etc.) can parse it
+        try {
+          const { extractText } = await import('unpdf');
+          const buffer = Buffer.from(cleanBase64, 'base64');
+          const pdfResult = await extractText(new Uint8Array(buffer), { mergePages: true });
+          const pdfText = Array.isArray(pdfResult?.text)
+            ? pdfResult.text.join('\n')
+            : String(pdfResult?.text || '');
+          if (pdfText.trim().length > 30) {
+            extractedText = pdfText.trim();
+          }
+        } catch (pdfErr: any) {
+          console.warn('[parse-cv-file] unpdf text extraction fallback:', pdfErr?.message || pdfErr);
+        }
       }
 
-      const cleanBase64 = fileBase64
-        ? fileBase64.includes(',')
-          ? fileBase64.split(',')[1]
-          : fileBase64
-        : '';
+      const supportsBinaryPdf =
+        llmConfig.provider === 'openrouter' ||
+        llmConfig.provider === 'openai' ||
+        llmConfig.provider === 'anthropic';
+
+      if (!extractedText && cleanBase64 && !supportsBinaryPdf) {
+        return res.status(400).json({
+          success: false,
+          error:
+            'Could not extract selectable text from this PDF (it may be a scanned image). Try uploading a text-based PDF, .docx, .txt, or .md resume, or use OpenRouter / OpenAI / Claude.',
+        });
+      }
 
       const useAttachment = !extractedText && Boolean(cleanBase64) && Boolean(mimeType);
       const prompt = useAttachment
@@ -1685,7 +2704,7 @@ Return strictly a valid JSON object matching this exact shape (no markdown prose
 
   // 1c. Deep Job Description Parsing & ATS Compatibility Audit
   app.post('/api/agent/analyze-job-compatibility', async (req, res) => {
-    const llmConfig = resolveLlmConfig(req.body?.llmConfig);
+    const llmConfig = resolveLlmConfig(req);
     try {
       const { job, userProfile } = req.body || {};
 
@@ -1726,31 +2745,11 @@ Return strictly a valid JSON object matching this exact shape (no markdown prose
   "gapRecommendations": ["Specific CV tailoring recommendation 1"]
 }`;
 
-      const llmPromise = runLlmGeneration({
+      const response = await runLlmGeneration({
         llmConfig,
         prompt,
         responseKind: 'object',
-        geminiSchema: {
-          type: Type.OBJECT,
-          properties: {
-            matchedKeywords: { type: Type.ARRAY, items: { type: Type.STRING } },
-            missingKeywords: { type: Type.ARRAY, items: { type: Type.STRING } },
-            matchedRequirements: { type: Type.ARRAY, items: { type: Type.STRING } },
-            missingRequirements: { type: Type.ARRAY, items: { type: Type.STRING } },
-            strengths: { type: Type.ARRAY, items: { type: Type.STRING } },
-            gapRecommendations: { type: Type.ARRAY, items: { type: Type.STRING } },
-          },
-        },
       });
-
-      const decisionPromise = getProviderApiKey('gemini')
-        ? evaluateJobWithDecisionModel(job, userProfile).catch((err) => {
-            console.warn('[analyze-job-compatibility] Decision model calibration skipped:', err?.message || err);
-            return null;
-          })
-        : Promise.resolve(null);
-
-      const [response, decisionEval] = await Promise.all([llmPromise, decisionPromise]);
 
       const analysis = extractJsonObject(response.text);
       if (!analysis) {
@@ -1760,19 +2759,12 @@ Return strictly a valid JSON object matching this exact shape (no markdown prose
         });
       }
 
-      if (decisionEval) {
-        analysis.overallScore = decisionEval.overallScore;
-        analysis.scoreBreakdown = decisionEval.scoreBreakdown;
-        analysis.decisionCalibration = decisionEval.decisionCalibration;
-      }
-
       analysis.jobId = job?.id;
 
       res.json({
         success: true,
         provider: llmConfig.provider,
         model: response.usedModel,
-        decisionModel: decisionEval ? DECISION_MODEL : null,
         analysis,
       });
     } catch (error: any) {
@@ -1784,7 +2776,7 @@ Return strictly a valid JSON object matching this exact shape (no markdown prose
 
   // 2. Discover Company Website & Career Page
   app.post('/api/agent/find-company-careers', async (req, res) => {
-    const llmConfig = resolveLlmConfig(req.body?.llmConfig);
+    const llmConfig = resolveLlmConfig(req);
     try {
       const { companyName, jobTitle } = req.body || {};
 
@@ -1802,16 +2794,11 @@ Return strictly a valid JSON object (no markdown prose):
   "notes": "Brief note about the discovered official career portal."
 }`;
 
-      const geminiSchema = {
-        type: Type.OBJECT,
-        properties: {
-          companyDomain: { type: Type.STRING },
-          careerPageUrl: { type: Type.STRING },
-          atsPlatform: { type: Type.STRING },
-          applyType: { type: Type.STRING },
-          notes: { type: Type.STRING },
-        },
-      };
+      const hasNativeSearch =
+        (llmConfig.provider === 'openai' || llmConfig.provider === 'anthropic') ||
+        (llmConfig.provider === 'openrouter' &&
+          llmConfig.model !== 'openrouter/free' &&
+          !llmConfig.model.endsWith(':free'));
 
       let parsed: any = null;
       try {
@@ -1819,22 +2806,20 @@ Return strictly a valid JSON object (no markdown prose):
           llmConfig,
           prompt: discoveryPrompt,
           responseKind: 'object',
-          useWebSearch: true,
+          useWebSearch: hasNativeSearch,
           allowGeminiFallback: false,
         });
         parsed = extractJsonObject(response.text);
       } catch (searchErr: any) {
-        // Fallback to standard inference if web search quota is exhausted on Gemini or unsupported tool error
         const shouldFallbackToStandard =
-          (llmConfig.provider === 'gemini' && isQuotaExhaustedError(searchErr)) ||
-          (searchErr instanceof LlmHttpError && searchErr.status === 400);
+          searchErr instanceof LlmHttpError &&
+          (searchErr.status === 400 || searchErr.status === 402 || searchErr.status === 403);
 
         if (shouldFallbackToStandard) {
           const fallbackResp = await runLlmGeneration({
             llmConfig,
             prompt: discoveryPrompt,
             responseKind: 'object',
-            geminiSchema,
             useWebSearch: false,
           });
           parsed = extractJsonObject(fallbackResp.text);
@@ -1861,7 +2846,7 @@ Return strictly a valid JSON object (no markdown prose):
 
   // 3. Tailor Resume & Cover Letter
   app.post('/api/agent/tailor-resume', async (req, res) => {
-    const llmConfig = resolveLlmConfig(req.body?.llmConfig);
+    const llmConfig = resolveLlmConfig(req);
     try {
       const { userProfile, jobListing } = req.body || {};
 
@@ -1924,7 +2909,7 @@ Return strictly a valid JSON object matching this exact shape (no markdown prose
 
   // 4. Map ATS Form Fields
   app.post('/api/agent/map-form-fields', async (req, res) => {
-    const llmConfig = resolveLlmConfig(req.body?.llmConfig);
+    const llmConfig = resolveLlmConfig(req);
     try {
       const { userProfile, jobListing } = req.body || {};
 

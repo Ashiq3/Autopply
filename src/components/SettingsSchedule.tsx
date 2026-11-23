@@ -1,13 +1,38 @@
-import React, { useState, useEffect } from 'react';
-import { Save, Plus, Trash2, Check, RotateCcw, Play, X, RefreshCw } from 'lucide-react';
+import React, { useState, useEffect, useMemo } from 'react';
+import {
+  Save,
+  Plus,
+  Trash2,
+  Check,
+  RotateCcw,
+  Play,
+  X,
+  RefreshCw,
+  KeyRound,
+  Eye,
+  EyeOff,
+  ExternalLink,
+  Unlink,
+  Search,
+} from 'lucide-react';
 import {
   ScheduleConfig,
   SavedSearchAlert,
   LlmProviderConfig,
   LlmProviderId,
+  LlmModelOption,
   ProviderAvailabilityMap,
 } from '../types';
 import { LLM_PROVIDER_CATALOG } from '../data/defaults';
+import {
+  getProviderCredential,
+  saveProviderCredential,
+  removeProviderCredential,
+  hasClientProviderKey,
+  buildLlmHeaders,
+  maskApiKey,
+  connectOpenRouterWithOAuth,
+} from '../utils/llmClient';
 
 interface SettingsScheduleProps {
   scheduleConfig: ScheduleConfig;
@@ -18,6 +43,7 @@ interface SettingsScheduleProps {
   onChangeLlmConfig: (updated: LlmProviderConfig) => void;
   providerAvailability: ProviderAvailabilityMap | null;
   onRefreshProviders?: () => Promise<void> | void;
+  onCredentialChange?: () => void;
 }
 
 const WEEKDAYS = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
@@ -31,12 +57,39 @@ export const SettingsSchedule: React.FC<SettingsScheduleProps> = ({
   onChangeLlmConfig,
   providerAvailability,
   onRefreshProviders,
+  onCredentialChange,
 }) => {
   const [config, setConfig] = useState<ScheduleConfig>(scheduleConfig);
   const [isSaved, setIsSaved] = useState(false);
   const [newExcluded, setNewExcluded] = useState('');
   const [isRefreshingProviders, setIsRefreshingProviders] = useState(false);
 
+  // Provider credential & live model picker state
+  const activeProviderMeta =
+    LLM_PROVIDER_CATALOG.find((p) => p.id === llmConfig.provider) || LLM_PROVIDER_CATALOG[0];
+
+  const [apiKeyInput, setApiKeyInput] = useState<string>(() => getProviderCredential(llmConfig.provider)?.apiKey || '');
+  const [baseUrlInput, setBaseUrlInput] = useState<string>(
+    () => llmConfig.baseUrl || getProviderCredential(llmConfig.provider)?.baseUrl || activeProviderMeta.defaultBaseUrl || ''
+  );
+  const [showApiKey, setShowApiKey] = useState(false);
+  const [showManualOpenRouterKey, setShowManualOpenRouterKey] = useState(false);
+  const [rememberInBrowser, setRememberInBrowser] = useState(true);
+  const [isTestingConnection, setIsTestingConnection] = useState(false);
+  const [isConnectingOAuth, setIsConnectingOAuth] = useState(false);
+  const [blockedAuthUrl, setBlockedAuthUrl] = useState<string | null>(null);
+  const [connectionStatus, setConnectionStatus] = useState<{
+    type: 'success' | 'error' | 'info';
+    message: string;
+  } | null>(null);
+
+  const [isLoadingModels, setIsLoadingModels] = useState(false);
+  const [liveModels, setLiveModels] = useState<LlmModelOption[]>([]);
+  const [modelSearchQuery, setModelSearchQuery] = useState('');
+  const [freeModelsOnly, setFreeModelsOnly] = useState(llmConfig.provider === 'openrouter');
+  const [modelsError, setModelsError] = useState<string | null>(null);
+
+  // Saved search alert creator state
   const [isCreatingAlert, setIsCreatingAlert] = useState(false);
   const [alertName, setAlertName] = useState('');
   const [alertTitles, setAlertTitles] = useState<string[]>(['Junior React Developer']);
@@ -51,6 +104,26 @@ export const SettingsSchedule: React.FC<SettingsScheduleProps> = ({
   useEffect(() => {
     setConfig(scheduleConfig);
   }, [scheduleConfig]);
+
+  // Sync key & baseUrl inputs whenever active provider switches
+  useEffect(() => {
+    const stored = getProviderCredential(llmConfig.provider);
+    const meta = LLM_PROVIDER_CATALOG.find((p) => p.id === llmConfig.provider) || LLM_PROVIDER_CATALOG[0];
+    setApiKeyInput(stored?.apiKey || '');
+    setBaseUrlInput(
+      llmConfig.provider === 'custom'
+        ? llmConfig.baseUrl || stored?.baseUrl || ''
+        : meta.defaultBaseUrl || ''
+    );
+    setShowApiKey(false);
+    setShowManualOpenRouterKey(false);
+    setBlockedAuthUrl(null);
+    setConnectionStatus(null);
+    setLiveModels([]);
+    setModelsError(null);
+    setModelSearchQuery('');
+    setFreeModelsOnly(llmConfig.provider === 'openrouter');
+  }, [llmConfig.provider]);
 
   const handleChange = (field: keyof ScheduleConfig, value: any) => {
     setConfig((prev) => ({ ...prev, [field]: value }));
@@ -121,14 +194,13 @@ export const SettingsSchedule: React.FC<SettingsScheduleProps> = ({
     setTimeout(() => setIsSaved(false), 3000);
   };
 
-  const activeProviderMeta =
-    LLM_PROVIDER_CATALOG.find((p) => p.id === llmConfig.provider) || LLM_PROVIDER_CATALOG[0];
-
   const handleSelectProvider = (providerId: LlmProviderId) => {
     const meta = LLM_PROVIDER_CATALOG.find((p) => p.id === providerId) || LLM_PROVIDER_CATALOG[0];
+    const stored = getProviderCredential(providerId);
     onChangeLlmConfig({
       provider: providerId,
       model: meta.defaultModel,
+      baseUrl: providerId === 'custom' ? stored?.baseUrl || '' : undefined,
     });
   };
 
@@ -142,8 +214,180 @@ export const SettingsSchedule: React.FC<SettingsScheduleProps> = ({
     }
   };
 
-  const isSelectedProviderConfigured = providerAvailability ? providerAvailability[llmConfig.provider] : null;
+  const handleLoadLiveModels = async (overrideKey?: string, overrideUrl?: string) => {
+    if (!activeProviderMeta.supportsDynamicModels) return;
+    setIsLoadingModels(true);
+    setModelsError(null);
+    try {
+      const effectiveUrl = llmConfig.provider === 'custom' ? (overrideUrl ?? baseUrlInput).trim() : undefined;
+      const effectiveKey = (overrideKey ?? apiKeyInput).trim();
+      const res = await fetch('/api/providers/models', {
+        method: 'POST',
+        headers: buildLlmHeaders(llmConfig, effectiveKey || undefined, effectiveUrl),
+        body: JSON.stringify({
+          llmConfig: {
+            provider: llmConfig.provider,
+            model: llmConfig.model,
+            baseUrl: effectiveUrl,
+          },
+        }),
+      });
+      const data = await res.json();
+      if (!res.ok || !data.success) {
+        throw new Error(data.error || 'Could not load live models from provider.');
+      }
+      setLiveModels(Array.isArray(data.models) ? data.models : []);
+    } catch (err: any) {
+      setModelsError(err.message || 'Unable to fetch model catalog.');
+    } finally {
+      setIsLoadingModels(false);
+    }
+  };
+
+  const handleTestAndConnect = async (e?: React.FormEvent) => {
+    if (e) e.preventDefault();
+    const trimmedKey = apiKeyInput.trim();
+    const trimmedBaseUrl = llmConfig.provider === 'custom' ? baseUrlInput.trim() : undefined;
+
+    if (activeProviderMeta.requiresApiKey && !trimmedKey && !providerAvailability?.[llmConfig.provider]) {
+      setConnectionStatus({
+        type: 'error',
+        message: `Paste your ${activeProviderMeta.name} API key first.`,
+      });
+      return;
+    }
+
+    if (llmConfig.provider === 'custom' && !trimmedBaseUrl) {
+      setConnectionStatus({
+        type: 'error',
+        message: 'Enter an HTTPS Base URL (for example: https://api.x.ai/v1).',
+      });
+      return;
+    }
+
+    setIsTestingConnection(true);
+    setConnectionStatus(null);
+
+    try {
+      const res = await fetch('/api/providers/test', {
+        method: 'POST',
+        headers: buildLlmHeaders(llmConfig, trimmedKey || undefined, trimmedBaseUrl),
+        body: JSON.stringify({
+          llmConfig: {
+            provider: llmConfig.provider,
+            model: llmConfig.model,
+            baseUrl: trimmedBaseUrl,
+          },
+        }),
+      });
+      const data = await res.json();
+      if (!res.ok || !data.success) {
+        throw new Error(data.error || `Connection failed (${res.status}).`);
+      }
+
+      if (trimmedKey || trimmedBaseUrl) {
+        saveProviderCredential(
+          llmConfig.provider,
+          {
+            apiKey: trimmedKey,
+            baseUrl: trimmedBaseUrl,
+            maskedHint: trimmedKey ? maskApiKey(trimmedKey) : undefined,
+            verifiedAt: new Date().toISOString(),
+          },
+          rememberInBrowser
+        );
+      }
+
+      if (llmConfig.provider === 'custom' && trimmedBaseUrl) {
+        onChangeLlmConfig({ ...llmConfig, baseUrl: trimmedBaseUrl });
+      }
+
+      onCredentialChange?.();
+      setConnectionStatus({
+        type: 'success',
+        message: data.message || `${activeProviderMeta.name} connected and ready to use.`,
+      });
+
+      if (activeProviderMeta.supportsDynamicModels) {
+        handleLoadLiveModels(trimmedKey, trimmedBaseUrl);
+      }
+    } catch (err: any) {
+      setConnectionStatus({
+        type: 'error',
+        message: err.message || 'Verification failed. Check your API key and model ID.',
+      });
+    } finally {
+      setIsTestingConnection(false);
+    }
+  };
+
+  const handleOpenRouterOAuthConnect = async () => {
+    setIsConnectingOAuth(true);
+    setBlockedAuthUrl(null);
+    setConnectionStatus({
+      type: 'info',
+      message: 'Complete sign-in in the OpenRouter window to connect your account...',
+    });
+
+    try {
+      const { maskedHint } = await connectOpenRouterWithOAuth({
+        persistInBrowser: rememberInBrowser,
+        onPopupBlocked: (url) => {
+          setBlockedAuthUrl(url);
+        },
+      });
+      const stored = getProviderCredential('openrouter');
+      if (stored?.apiKey) setApiKeyInput(stored.apiKey);
+      onCredentialChange?.();
+      setBlockedAuthUrl(null);
+      setConnectionStatus({
+        type: 'success',
+        message: `OpenRouter connected automatically (${maskedHint}). Free and paid models are ready to use.`,
+      });
+      handleLoadLiveModels(stored?.apiKey);
+    } catch (err: any) {
+      setConnectionStatus({
+        type: 'error',
+        message: err?.message || 'Could not complete OpenRouter sign-in.',
+      });
+    } finally {
+      setIsConnectingOAuth(false);
+    }
+  };
+
+  const handleDisconnectProvider = () => {
+    removeProviderCredential(llmConfig.provider);
+    setApiKeyInput('');
+    setBlockedAuthUrl(null);
+    if (llmConfig.provider === 'custom') {
+      setBaseUrlInput('');
+      onChangeLlmConfig({ ...llmConfig, baseUrl: undefined });
+    }
+    setConnectionStatus({
+      type: 'info',
+      message: `Disconnected ${activeProviderMeta.name} from this browser.`,
+    });
+    onCredentialChange?.();
+  };
+
+  const storedCred = getProviderCredential(llmConfig.provider);
+  const hasBrowserKey = hasClientProviderKey(llmConfig.provider);
+  const hasServerKey = Boolean(providerAvailability?.[llmConfig.provider]);
+  const isActiveConnected = hasBrowserKey || hasServerKey;
   const hasPresetModel = activeProviderMeta.models.some((m) => m.id === llmConfig.model);
+
+  const filteredLiveModels = useMemo(() => {
+    const q = modelSearchQuery.trim().toLowerCase();
+    return liveModels
+      .filter((m) => {
+        if (freeModelsOnly && !m.isFree) return false;
+        if (!q) return true;
+        return m.id.toLowerCase().includes(q) || m.label.toLowerCase().includes(q);
+      })
+      .slice(0, 60);
+  }, [liveModels, modelSearchQuery, freeModelsOnly]);
+
+  const hasFreeModelsInList = useMemo(() => liveModels.some((m) => m.isFree), [liveModels]);
 
   return (
     <div className="space-y-8">
@@ -154,7 +398,7 @@ export const SettingsSchedule: React.FC<SettingsScheduleProps> = ({
             Settings, AI Providers &amp; Alerts
           </h1>
           <p className="text-sm text-zinc-600 dark:text-zinc-400">
-            Select your LLM provider &amp; model, configure run thresholds, and manage search alert presets.
+            Connect OpenRouter or any third-party AI provider with your API key, choose a model, and manage run alerts.
           </p>
         </div>
 
@@ -185,13 +429,14 @@ export const SettingsSchedule: React.FC<SettingsScheduleProps> = ({
         </div>
       </div>
 
-      {/* AI Model Provider Selection */}
+      {/* AI Model Provider Connection & Selection */}
       <section className="bg-white dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-800 rounded-2xl p-6 sm:p-8 space-y-6 text-sm">
         <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 border-b border-zinc-200 dark:border-zinc-800 pb-5">
           <div className="space-y-1">
             <h2 className="text-lg font-bold text-zinc-950 dark:text-zinc-50">AI Model Provider</h2>
             <p className="text-sm text-zinc-600 dark:text-zinc-400">
-              Choose which backend LLM powers job search, CV parsing, ATS audits, and resume tailoring.
+              Select a provider and paste your API key below to power job search, CV parsing, ATS audits, and resume
+              tailoring.
             </p>
           </div>
 
@@ -202,15 +447,24 @@ export const SettingsSchedule: React.FC<SettingsScheduleProps> = ({
             className="inline-flex items-center gap-2 px-4 py-2 rounded-xl text-sm font-semibold bg-white dark:bg-zinc-800 border border-zinc-300 dark:border-zinc-700 hover:bg-zinc-50 dark:hover:bg-zinc-700 text-zinc-800 dark:text-zinc-100 shadow-2xs self-start sm:self-auto whitespace-nowrap transition-colors"
           >
             <RefreshCw className={`w-4 h-4 ${isRefreshingProviders ? 'animate-spin' : ''}`} />
-            <span>Check Server Keys</span>
+            <span>Refresh Status</span>
           </button>
         </div>
 
-        {/* Provider Selector Radio Cards */}
-        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+        {/* 8 Provider Selector Cards */}
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3.5">
           {LLM_PROVIDER_CATALOG.map((providerMeta) => {
             const isSelected = llmConfig.provider === providerMeta.id;
-            const isConfigured = providerAvailability ? providerAvailability[providerMeta.id] : null;
+            const browserConnected = hasClientProviderKey(providerMeta.id);
+            const serverConnected = Boolean(providerAvailability?.[providerMeta.id]);
+            const ready = browserConnected || serverConnected;
+
+            const statusLabel = browserConnected
+              ? 'Ready (Browser)'
+              : serverConnected
+                ? 'Ready (Server)'
+                : 'Not connected';
+
             return (
               <button
                 key={providerMeta.id}
@@ -237,27 +491,242 @@ export const SettingsSchedule: React.FC<SettingsScheduleProps> = ({
 
                 <div className="flex items-center justify-between gap-2 text-xs">
                   <span className="font-mono text-zinc-500 dark:text-zinc-400 truncate">
-                    {providerMeta.envKeyName}
+                    {providerMeta.defaultModel}
                   </span>
-                  {isConfigured !== null && (
-                    <span
-                      className={`font-semibold shrink-0 ${
-                        isConfigured
-                          ? 'text-emerald-700 dark:text-emerald-400'
-                          : 'text-zinc-500 dark:text-zinc-400'
-                      }`}
-                    >
-                      {isConfigured ? 'Ready' : 'Key missing'}
-                    </span>
-                  )}
+                  <span
+                    className={`font-semibold shrink-0 ${
+                      ready ? 'text-emerald-700 dark:text-emerald-400' : 'text-zinc-500 dark:text-zinc-400'
+                    }`}
+                  >
+                    {statusLabel}
+                  </span>
                 </div>
               </button>
             );
           })}
         </div>
 
+        {/* Connect Provider Panel */}
+        <form
+          onSubmit={handleTestAndConnect}
+          className="rounded-xl border border-zinc-200 dark:border-zinc-800 bg-zinc-50/80 dark:bg-zinc-950 p-5 space-y-4"
+        >
+          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+            <div className="space-y-0.5">
+              <div className="flex items-center gap-2 font-bold text-zinc-950 dark:text-zinc-50">
+                <KeyRound className="w-4 h-4 text-blue-600 dark:text-blue-400" />
+                <span>Connect {activeProviderMeta.name}</span>
+                {isActiveConnected && (
+                  <span className="text-xs font-semibold text-emerald-700 dark:text-emerald-400">
+                    ·{' '}
+                    {hasBrowserKey
+                      ? storedCred?.authMethod === 'oauth'
+                        ? `Connected via OAuth (${storedCred?.maskedHint || 'active'})`
+                        : `Connected (${storedCred?.maskedHint || 'key active'})`
+                      : 'Server key active'}
+                  </span>
+                )}
+              </div>
+              <p className="text-xs text-zinc-600 dark:text-zinc-400">{activeProviderMeta.description}</p>
+            </div>
+
+            <div className="flex items-center gap-2.5 shrink-0">
+              {llmConfig.provider !== 'openrouter' && activeProviderMeta.keyPortalUrl && (
+                <a
+                  href={activeProviderMeta.keyPortalUrl}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold bg-white dark:bg-zinc-900 border border-zinc-300 dark:border-zinc-700 text-blue-700 dark:text-blue-400 hover:border-blue-500 whitespace-nowrap"
+                >
+                  <span>{activeProviderMeta.keyPortalLabel}</span>
+                  <ExternalLink className="w-3.5 h-3.5" />
+                </a>
+              )}
+
+              {hasBrowserKey && (
+                <button
+                  type="button"
+                  onClick={handleDisconnectProvider}
+                  className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold bg-white dark:bg-zinc-900 border border-zinc-300 dark:border-zinc-700 text-zinc-700 dark:text-zinc-300 hover:text-red-600 dark:hover:text-red-400 hover:border-red-300 whitespace-nowrap"
+                >
+                  <Unlink className="w-3.5 h-3.5" />
+                  <span>Disconnect</span>
+                </button>
+              )}
+            </div>
+          </div>
+
+          {/* Primary 1-Click OAuth Connect for OpenRouter */}
+          {llmConfig.provider === 'openrouter' && (
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 p-4 rounded-xl bg-white dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-800">
+              <div className="space-y-1">
+                <div className="font-semibold text-zinc-950 dark:text-zinc-100">
+                  {hasBrowserKey ? 'OpenRouter account connected' : 'One-click OpenRouter sign-in'}
+                </div>
+                <p className="text-xs text-zinc-600 dark:text-zinc-400">
+                  {hasBrowserKey
+                    ? 'You can reconnect anytime or switch between free and paid models below.'
+                    : 'Sign in with your OpenRouter account in one click—no copying or pasting API keys required.'}
+                </p>
+              </div>
+
+              <div className="flex flex-wrap items-center gap-2.5 shrink-0">
+                <button
+                  type="button"
+                  onClick={handleOpenRouterOAuthConnect}
+                  disabled={isConnectingOAuth}
+                  className="inline-flex items-center gap-2 px-5 py-2.5 rounded-xl text-sm font-semibold bg-blue-600 hover:bg-blue-700 text-white shadow-xs transition-colors whitespace-nowrap disabled:opacity-60"
+                >
+                  {isConnectingOAuth ? (
+                    <>
+                      <RefreshCw className="w-4 h-4 animate-spin" />
+                      <span>Authorizing...</span>
+                    </>
+                  ) : (
+                    <>
+                      <ExternalLink className="w-4 h-4" />
+                      <span>{hasBrowserKey ? 'Reconnect OpenRouter' : 'Connect with OpenRouter'}</span>
+                    </>
+                  )}
+                </button>
+              </div>
+            </div>
+          )}
+
+          {blockedAuthUrl && (
+            <div className="px-4 py-3 rounded-xl border border-amber-200 dark:border-amber-900/70 bg-amber-50 dark:bg-amber-950/30 text-xs text-amber-900 dark:text-amber-200 flex flex-wrap items-center justify-between gap-3">
+              <span>Popup was blocked by your browser. Open OpenRouter authorization directly:</span>
+              <a
+                href={blockedAuthUrl}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-amber-600 hover:bg-amber-700 text-white font-semibold"
+              >
+                <span>Open OpenRouter Sign-In</span>
+                <ExternalLink className="w-3.5 h-3.5" />
+              </a>
+            </div>
+          )}
+
+          {llmConfig.provider === 'openrouter' && (
+            <div className="flex items-center justify-between gap-3">
+              <button
+                type="button"
+                onClick={() => setShowManualOpenRouterKey((prev) => !prev)}
+                className="text-xs font-medium text-zinc-600 dark:text-zinc-400 hover:text-blue-600 dark:hover:text-blue-400 underline underline-offset-4"
+              >
+                {showManualOpenRouterKey ? 'Hide manual API key input' : 'Or enter an OpenRouter API key manually'}
+              </button>
+            </div>
+          )}
+
+          {(llmConfig.provider !== 'openrouter' || showManualOpenRouterKey) && (
+            <div className="grid grid-cols-1 md:grid-cols-12 gap-4 items-end">
+              {llmConfig.provider === 'custom' && (
+                <div className="md:col-span-5 space-y-1.5">
+                  <label className="text-zinc-700 dark:text-zinc-300 font-medium block">HTTPS Base URL</label>
+                  <input
+                    type="url"
+                    value={baseUrlInput}
+                    onChange={(e) => {
+                      const val = e.target.value;
+                      setBaseUrlInput(val);
+                      onChangeLlmConfig({ ...llmConfig, baseUrl: val });
+                    }}
+                    placeholder="https://api.x.ai/v1"
+                    className="w-full bg-white dark:bg-zinc-900 border border-zinc-300 dark:border-zinc-700 rounded-xl px-3.5 py-2.5 text-sm font-mono text-zinc-900 dark:text-zinc-100 placeholder-zinc-400 focus:outline-none focus:border-blue-500"
+                  />
+                </div>
+              )}
+
+              <div className={`${llmConfig.provider === 'custom' ? 'md:col-span-7' : 'md:col-span-12'} space-y-1.5`}>
+                <label className="text-zinc-700 dark:text-zinc-300 font-medium block">
+                  {activeProviderMeta.name} API Key{' '}
+                  {!activeProviderMeta.requiresApiKey && (
+                    <span className="font-normal text-zinc-500 dark:text-zinc-400">
+                      (optional if endpoint has no auth)
+                    </span>
+                  )}
+                </label>
+                <div className="flex gap-2.5">
+                  <div className="relative flex-1">
+                    <input
+                      type={showApiKey ? 'text' : 'password'}
+                      autoComplete="off"
+                      value={apiKeyInput}
+                      onChange={(e) => setApiKeyInput(e.target.value)}
+                      placeholder={
+                        hasServerKey && !apiKeyInput
+                          ? 'Server key active — paste your own key to override'
+                          : activeProviderMeta.apiKeyPlaceholder
+                      }
+                      className="w-full bg-white dark:bg-zinc-900 border border-zinc-300 dark:border-zinc-700 rounded-xl pl-3.5 pr-10 py-2.5 text-sm font-mono text-zinc-900 dark:text-zinc-100 placeholder-zinc-400 focus:outline-none focus:border-blue-500"
+                    />
+                    <button
+                      type="button"
+                      onClick={() => setShowApiKey((prev) => !prev)}
+                      aria-label={showApiKey ? 'Hide API key' : 'Show API key'}
+                      className="absolute right-2.5 top-1/2 -translate-y-1/2 p-1 text-zinc-500 hover:text-zinc-800 dark:hover:text-zinc-200"
+                    >
+                      {showApiKey ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+                    </button>
+                  </div>
+
+                  <button
+                    type="submit"
+                    disabled={isTestingConnection}
+                    className="inline-flex items-center gap-2 px-5 py-2.5 rounded-xl text-sm font-semibold bg-blue-600 hover:bg-blue-700 text-white shadow-xs transition-colors whitespace-nowrap disabled:opacity-60"
+                  >
+                    {isTestingConnection ? (
+                      <>
+                        <RefreshCw className="w-4 h-4 animate-spin" />
+                        <span>Testing...</span>
+                      </>
+                    ) : (
+                      <>
+                        <Check className="w-4 h-4" />
+                        <span>Test &amp; Connect</span>
+                      </>
+                    )}
+                  </button>
+                </div>
+              </div>
+            </div>
+          )}
+
+          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 pt-1">
+            <label className="inline-flex items-center gap-2 text-xs text-zinc-600 dark:text-zinc-400 cursor-pointer">
+              <input
+                type="checkbox"
+                checked={rememberInBrowser}
+                onChange={(e) => setRememberInBrowser(e.target.checked)}
+                className="w-4 h-4 rounded border-zinc-300 dark:border-zinc-700 text-blue-600"
+              />
+              <span>Remember connection in this browser (uncheck for current session only)</span>
+            </label>
+
+            <span className="text-xs text-zinc-500 dark:text-zinc-400 font-mono">
+              Env fallback: {activeProviderMeta.envKeyName}
+            </span>
+          </div>
+
+          {connectionStatus && (
+            <div
+              className={`px-4 py-3 rounded-xl border text-sm font-medium ${
+                connectionStatus.type === 'success'
+                  ? 'bg-emerald-50 dark:bg-emerald-950/30 border-emerald-200 dark:border-emerald-900/70 text-emerald-800 dark:text-emerald-200'
+                  : connectionStatus.type === 'error'
+                    ? 'bg-red-50 dark:bg-red-950/40 border-red-200 dark:border-red-900/70 text-red-800 dark:text-red-200'
+                    : 'bg-white dark:bg-zinc-900 border-zinc-200 dark:border-zinc-800 text-zinc-700 dark:text-zinc-300'
+              }`}
+            >
+              {connectionStatus.message}
+            </div>
+          )}
+        </form>
+
         {/* Selected Provider Model Row */}
-        <div className="grid grid-cols-1 md:grid-cols-12 gap-5 pt-2 items-end">
+        <div className="grid grid-cols-1 md:grid-cols-12 gap-4 pt-1 items-end">
           <div className="md:col-span-5 space-y-1.5">
             <label className="text-zinc-700 dark:text-zinc-300 font-medium block">Preset Model</label>
             <select
@@ -279,9 +748,9 @@ export const SettingsSchedule: React.FC<SettingsScheduleProps> = ({
             </select>
           </div>
 
-          <div className="md:col-span-7 space-y-1.5">
+          <div className={`${activeProviderMeta.supportsDynamicModels ? 'md:col-span-5' : 'md:col-span-7'} space-y-1.5`}>
             <label className="text-zinc-700 dark:text-zinc-300 font-medium block">
-              Model ID (editable for custom or free-tier slugs)
+              Model ID (editable for any provider slug)
             </label>
             <input
               type="text"
@@ -291,21 +760,95 @@ export const SettingsSchedule: React.FC<SettingsScheduleProps> = ({
               className="w-full bg-white dark:bg-zinc-950 border border-zinc-300 dark:border-zinc-700 rounded-xl px-3.5 py-2.5 text-sm font-mono text-zinc-900 dark:text-zinc-100 placeholder-zinc-400 focus:outline-none focus:border-blue-500"
             />
           </div>
+
+          {activeProviderMeta.supportsDynamicModels && (
+            <div className="md:col-span-2">
+              <button
+                type="button"
+                onClick={() => handleLoadLiveModels()}
+                disabled={isLoadingModels}
+                className="w-full inline-flex items-center justify-center gap-2 px-3.5 py-2.5 rounded-xl text-sm font-semibold bg-white dark:bg-zinc-800 border border-zinc-300 dark:border-zinc-700 hover:border-blue-500 text-zinc-800 dark:text-zinc-100 shadow-2xs transition-colors whitespace-nowrap disabled:opacity-60"
+              >
+                <RefreshCw className={`w-4 h-4 ${isLoadingModels ? 'animate-spin' : ''}`} />
+                <span>{isLoadingModels ? 'Loading...' : 'Browse Models'}</span>
+              </button>
+            </div>
+          )}
         </div>
 
-        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 pt-3 border-t border-zinc-200 dark:border-zinc-800 text-sm text-zinc-600 dark:text-zinc-400">
-          <span>{activeProviderMeta.description}</span>
-          {isSelectedProviderConfigured === false ? (
-            <span className="text-amber-700 dark:text-amber-400 font-medium">
-              Set <code className="font-mono">{activeProviderMeta.envKeyName}</code> in Settings &gt; Secrets (or{' '}
-              <code className="font-mono">.env</code>) to activate {activeProviderMeta.name}.
-            </span>
-          ) : isSelectedProviderConfigured === true ? (
-            <span className="text-emerald-700 dark:text-emerald-400 font-semibold whitespace-nowrap">
-              {activeProviderMeta.envKeyName} configured on server
-            </span>
-          ) : null}
-        </div>
+        {modelsError && (
+          <div className="px-4 py-3 rounded-xl border border-red-200 dark:border-red-900/70 bg-red-50 dark:bg-red-950/40 text-red-800 dark:text-red-200 text-xs">
+            {modelsError}
+          </div>
+        )}
+
+        {/* Live Searchable Model Browser */}
+        {liveModels.length > 0 && (
+          <div className="border border-zinc-200 dark:border-zinc-800 rounded-xl overflow-hidden bg-zinc-50/70 dark:bg-zinc-950">
+            <div className="p-3.5 border-b border-zinc-200 dark:border-zinc-800 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+              <div className="relative flex-1">
+                <Search className="w-4 h-4 text-zinc-400 absolute left-3 top-1/2 -translate-y-1/2" />
+                <input
+                  type="text"
+                  value={modelSearchQuery}
+                  onChange={(e) => setModelSearchQuery(e.target.value)}
+                  placeholder={`Filter ${liveModels.length} available ${activeProviderMeta.name} models...`}
+                  className="w-full bg-white dark:bg-zinc-900 border border-zinc-300 dark:border-zinc-700 rounded-lg pl-9 pr-3 py-1.5 text-sm text-zinc-900 dark:text-zinc-100 focus:outline-none focus:border-blue-500"
+                />
+              </div>
+
+              {(hasFreeModelsInList || llmConfig.provider === 'openrouter') && (
+                <label className="inline-flex items-center gap-2 text-xs font-semibold text-zinc-700 dark:text-zinc-300 cursor-pointer shrink-0">
+                  <input
+                    type="checkbox"
+                    checked={freeModelsOnly}
+                    onChange={(e) => setFreeModelsOnly(e.target.checked)}
+                    className="w-4 h-4 rounded border-zinc-300 dark:border-zinc-700 text-blue-600"
+                  />
+                  <span>Free models only</span>
+                </label>
+              )}
+            </div>
+
+            <div className="max-h-56 overflow-y-auto divide-y divide-zinc-200 dark:divide-zinc-800">
+              {filteredLiveModels.length === 0 ? (
+                <div className="p-4 text-center text-xs text-zinc-500 dark:text-zinc-400">
+                  No models match "{modelSearchQuery}".
+                </div>
+              ) : (
+                filteredLiveModels.map((m) => {
+                  const isCurrent = llmConfig.model === m.id;
+                  return (
+                    <button
+                      key={m.id}
+                      type="button"
+                      onClick={() => onChangeLlmConfig({ ...llmConfig, model: m.id })}
+                      className={`w-full px-4 py-2.5 text-left flex items-center justify-between gap-3 text-xs transition-colors ${
+                        isCurrent
+                          ? 'bg-blue-50 dark:bg-blue-950/40 text-blue-900 dark:text-blue-200'
+                          : 'bg-white dark:bg-zinc-900/60 hover:bg-zinc-50 dark:hover:bg-zinc-800/70 text-zinc-800 dark:text-zinc-200'
+                      }`}
+                    >
+                      <div className="min-w-0">
+                        <div className="font-semibold truncate">{m.label}</div>
+                        <div className="font-mono text-zinc-500 dark:text-zinc-400 truncate">{m.id}</div>
+                      </div>
+                      <div className="flex items-center gap-2 shrink-0">
+                        {m.isFree && (
+                          <span className="font-semibold text-emerald-700 dark:text-emerald-400">Free</span>
+                        )}
+                        {!m.isFree && m.note && (
+                          <span className="text-zinc-500 dark:text-zinc-400">{m.note}</span>
+                        )}
+                        {isCurrent && <Check className="w-4 h-4 text-blue-600 dark:text-blue-400" />}
+                      </div>
+                    </button>
+                  );
+                })
+              )}
+            </div>
+          </div>
+        )}
       </section>
 
       <div className="grid grid-cols-1 md:grid-cols-12 gap-8 text-sm">

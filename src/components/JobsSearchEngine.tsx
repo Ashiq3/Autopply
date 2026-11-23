@@ -22,6 +22,7 @@ import {
   KeywordSuggestionsResult,
   LlmProviderConfig,
 } from '../types';
+import { agentFetch } from '../utils/llmClient';
 
 interface JobsSearchEngineProps {
   discoveredJobs: JobListing[];
@@ -39,6 +40,7 @@ interface JobsSearchEngineProps {
   onRemoveJob: (jobId: string) => void;
   onUpdateScreenedJobs?: (jobs: JobListing[]) => void;
   onGoToApplications: () => void;
+  onOpenSettings?: () => void;
 }
 
 const KNOWN_TECH_AND_WORKFLOW_TERMS = [
@@ -93,6 +95,7 @@ export const JobsSearchEngine: React.FC<JobsSearchEngineProps> = ({
   onRemoveJob,
   onUpdateScreenedJobs,
   onGoToApplications,
+  onOpenSettings,
 }) => {
   const [titles, setTitles] = useState<string[]>(
     userProfile.targetJobTitles && userProfile.targetJobTitles.length > 0
@@ -235,16 +238,15 @@ export const JobsSearchEngine: React.FC<JobsSearchEngineProps> = ({
     setIsSuggestingKeywords(true);
     setSuggestionError(null);
     try {
-      const res = await fetch('/api/agent/suggest-keywords', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
+      const res = await agentFetch(
+        '/api/agent/suggest-keywords',
+        {
           userProfile,
           currentTitles: titles,
           currentKeywords: keywords,
-          llmConfig,
-        }),
-      });
+        },
+        llmConfig
+      );
       const data = await res.json();
       if (!res.ok || !data.success || !data.suggestions) {
         throw new Error(data.error || 'Failed to generate CV keyword suggestions.');
@@ -280,11 +282,11 @@ export const JobsSearchEngine: React.FC<JobsSearchEngineProps> = ({
     setExpandedAnalysisJobId(job.id);
 
     try {
-      const res = await fetch('/api/agent/analyze-job-compatibility', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ job, userProfile, llmConfig }),
-      });
+      const res = await agentFetch(
+        '/api/agent/analyze-job-compatibility',
+        { job, userProfile },
+        llmConfig
+      );
 
       const data = await res.json();
       if (!res.ok || !data.success || !data.analysis) {
@@ -308,18 +310,18 @@ export const JobsSearchEngine: React.FC<JobsSearchEngineProps> = ({
     setIsBatchScreening(true);
     setAnalysisError(null);
     try {
-      const res = await fetch('/api/agent/decision-evaluate-jobs', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ jobs: discoveredJobs, userProfile }),
-      });
+      const res = await agentFetch(
+        '/api/agent/decision-evaluate-jobs',
+        { jobs: discoveredJobs, userProfile },
+        llmConfig
+      );
       const data = await res.json();
       if (!res.ok || !data.success || !Array.isArray(data.jobs)) {
-        throw new Error(data.error || 'Could not run Decision AI screening.');
+        throw new Error(data.error || 'Could not calibrate job fit scores.');
       }
       onUpdateScreenedJobs(data.jobs);
     } catch (err: any) {
-      setAnalysisError(err.message || 'Unable to run Decision AI screening.');
+      setAnalysisError(err.message || 'Unable to calibrate job fit scores.');
     } finally {
       setIsBatchScreening(false);
     }
@@ -812,6 +814,15 @@ export const JobsSearchEngine: React.FC<JobsSearchEngineProps> = ({
             </div>
           </div>
           <div className="flex items-center gap-2.5 shrink-0 self-end sm:self-center">
+            {onOpenSettings && (
+              <button
+                type="button"
+                onClick={onOpenSettings}
+                className="px-4 py-2 rounded-xl bg-white dark:bg-zinc-900 border border-red-300 dark:border-red-800 text-red-800 dark:text-red-200 font-semibold hover:bg-red-100/60 dark:hover:bg-red-900/40 whitespace-nowrap"
+              >
+                Provider Settings
+              </button>
+            )}
             {searchError && onAddManualJob && (
               <button
                 type="button"
@@ -878,7 +889,7 @@ export const JobsSearchEngine: React.FC<JobsSearchEngineProps> = ({
               ) : (
                 <BarChart3 className="w-4 h-4 text-blue-600 dark:text-blue-400" />
               )}
-              <span>{isBatchScreening ? 'Screening...' : 'Calibrate Fit (Decision AI)'}</span>
+              <span>{isBatchScreening ? 'Calibrating...' : 'Calibrate Fit (AI)'}</span>
             </button>
           )}
 

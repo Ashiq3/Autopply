@@ -41,9 +41,19 @@ export const SidebarNav: React.FC<{
   scheduleConfig: ScheduleConfig;
   userProfile: UserProfile;
   llmConfig?: LlmProviderConfig;
+  isProviderConnected?: boolean;
   mobileOpen: boolean;
   onCloseMobile: () => void;
-}> = ({ activeTab, setActiveTab, scheduleConfig, userProfile, llmConfig, mobileOpen, onCloseMobile }) => {
+}> = ({
+  activeTab,
+  setActiveTab,
+  scheduleConfig,
+  userProfile,
+  llmConfig,
+  isProviderConnected,
+  mobileOpen,
+  onCloseMobile,
+}) => {
   const handleSelectTab = (tabId: string) => {
     setActiveTab(tabId);
     onCloseMobile();
@@ -110,9 +120,22 @@ export const SidebarNav: React.FC<{
             type="button"
             onClick={() => handleSelectTab('settings')}
             className="w-full text-left px-3 py-2 rounded-xl border border-zinc-200 dark:border-zinc-800 bg-zinc-50 dark:bg-zinc-950 hover:border-blue-500 transition-colors"
-            title="Change AI provider or model"
+            title="Change AI provider or connect API key"
           >
-            <div className="text-[11px] font-medium text-zinc-500 dark:text-zinc-400">Active Model</div>
+            <div className="flex items-center justify-between gap-2 text-[11px] font-medium">
+              <span className="text-zinc-500 dark:text-zinc-400">Active Model</span>
+              {typeof isProviderConnected === 'boolean' && (
+                <span
+                  className={
+                    isProviderConnected
+                      ? 'text-emerald-700 dark:text-emerald-400 font-semibold'
+                      : 'text-amber-700 dark:text-amber-400 font-semibold'
+                  }
+                >
+                  {isProviderConnected ? 'Connected' : 'Add Key'}
+                </span>
+              )}
+            </div>
             <div className="font-mono text-xs font-semibold text-zinc-900 dark:text-zinc-100 truncate">
               {llmConfig.provider} · {llmConfig.model}
             </div>

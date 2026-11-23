@@ -24,6 +24,8 @@ import {
   LlmProviderConfig,
   ProviderAvailabilityMap,
 } from './types';
+import { agentFetch, hasClientProviderKey, connectOpenRouterWithOAuth } from './utils/llmClient';
+import { KeyRound, ExternalLink, RefreshCw } from 'lucide-react';
 
 const STORAGE_KEYS = {
   PROFILE: 'autoapply_user_profile_v1',
@@ -37,12 +39,17 @@ const STORAGE_KEYS = {
 function loadInitialLlmConfig(): LlmProviderConfig {
   try {
     const v2 = localStorage.getItem(STORAGE_KEYS.LLM_CONFIG);
-    if (v2) return JSON.parse(v2) as LlmProviderConfig;
+    if (v2) {
+      const parsed = JSON.parse(v2) as LlmProviderConfig;
+      if ((parsed.provider as string) !== 'gemini') {
+        return parsed;
+      }
+    }
 
     const v1 = localStorage.getItem('autoapply_llm_config_v1');
     if (v1) {
       const parsed = JSON.parse(v1) as LlmProviderConfig;
-      if (parsed.provider !== 'gemini') {
+      if ((parsed.provider as string) !== 'gemini') {
         return parsed;
       }
     }
@@ -94,6 +101,10 @@ export default function App() {
   );
   const [llmConfig, setLlmConfig] = useState<LlmProviderConfig>(loadInitialLlmConfig);
   const [providerAvailability, setProviderAvailability] = useState<ProviderAvailabilityMap | null>(null);
+  const [, setCredentialVersion] = useState<number>(0);
+  const [isConnectingOpenRouter, setIsConnectingOpenRouter] = useState<boolean>(false);
+  const [bannerConnectError, setBannerConnectError] = useState<string | null>(null);
+  const [blockedBannerAuthUrl, setBlockedBannerAuthUrl] = useState<string | null>(null);
 
   const [isAgentRunning, setIsAgentRunning] = useState<boolean>(false);
   const [pipelinePhase, setPipelinePhase] = useState<string | null>(null);
@@ -237,15 +248,14 @@ export default function App() {
     );
 
     try {
-      const response = await fetch('/api/agent/search-indeed-jobs', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
+      const response = await agentFetch(
+        '/api/agent/search-indeed-jobs',
+        {
           ...searchParams,
           excludedCompanies: scheduleConfig.excludedCompanies,
-          llmConfig,
-        }),
-      });
+        },
+        llmConfig
+      );
       const data = await response.json();
 
       if (!response.ok || !data.success) {
@@ -325,43 +335,12 @@ export default function App() {
     addLog('SEARCHING_INDEED', `Starting pipeline for "${jobToProcess.title}" at ${jobToProcess.company}.`, 'thought');
 
     try {
-      let evaluatedScore = jobToProcess.matchScore;
-      let evaluatedJob = jobToProcess;
-
-      if (providerAvailability?.gemini) {
-        setPipelinePhase(`Pre-screening ${jobToProcess.company} with gemini-decision-1...`);
-        try {
-          const decRes = await fetch('/api/agent/decision-evaluate-jobs', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ job: jobToProcess, userProfile }),
-          });
-          const decData = await decRes.json();
-          if (decRes.ok && decData.success && decData.decisionCalibration) {
-            evaluatedScore = decData.overallScore ?? jobToProcess.matchScore;
-            evaluatedJob = {
-              ...jobToProcess,
-              matchScore: evaluatedScore,
-              decisionCalibration: decData.decisionCalibration,
-            };
-            setDiscoveredJobs((prev) => prev.map((j) => (j.id === jobToProcess.id ? evaluatedJob : j)));
-            const dc = decData.decisionCalibration;
-            addLog(
-              'EVALUATING_MATCH',
-              `Decision AI (${dc.model}): ${evaluatedScore}% calibrated fit · ${dc.shouldApplyProbability}% apply likelihood (${dc.confidence}% confidence · 0 output tokens).`,
-              'success'
-            );
-          }
-        } catch {
-          // Proceed cleanly if decision screening is temporarily unavailable
-        }
-      } else {
-        addLog(
-          'EVALUATING_MATCH',
-          `Evaluating fit against ${jobToProcess.requiredSkills.join(', ')} (${evaluatedScore}% baseline fit).`,
-          'thought'
-        );
-      }
+      const evaluatedScore = jobToProcess.matchScore;
+      addLog(
+        'EVALUATING_MATCH',
+        `Evaluating fit against ${jobToProcess.requiredSkills.join(', ')} (${evaluatedScore}% baseline fit).`,
+        'thought'
+      );
 
       // Step 3: Discover Company Website & Career Page (reuse existing portal URL if already discovered)
       let companyInfo: { careerPageUrl: string; atsPlatform?: string } = {
@@ -373,11 +352,11 @@ export default function App() {
       } else {
         setPipelinePhase(`Step 1/3 · Finding official career portal for ${jobToProcess.company}...`);
         addLog('FINDING_COMPANY_SITE', `Resolving official career portal for ${jobToProcess.company}...`, 'info');
-        const companyRes = await fetch('/api/agent/find-company-careers', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ companyName: jobToProcess.company, jobTitle: jobToProcess.title, llmConfig }),
-        });
+        const companyRes = await agentFetch(
+          '/api/agent/find-company-careers',
+          { companyName: jobToProcess.company, jobTitle: jobToProcess.title },
+          llmConfig
+        );
         const compData = await companyRes.json();
         if (!companyRes.ok || !compData.success) {
           throw new Error(compData.error || 'Failed to discover company career portal.');
@@ -389,11 +368,11 @@ export default function App() {
       // Step 4: Tailor Resume & Cover Letter
       setPipelinePhase(`Step 2/3 · Tailoring CV & cover letter for ${jobToProcess.title}...`);
       addLog('TAILORING_RESUME', `Tailoring CV and cover letter for ${jobToProcess.company}...`, 'thought');
-      const tailorRes = await fetch('/api/agent/tailor-resume', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ userProfile, jobListing: jobToProcess, llmConfig }),
-      });
+      const tailorRes = await agentFetch(
+        '/api/agent/tailor-resume',
+        { userProfile, jobListing: jobToProcess },
+        llmConfig
+      );
       const tailorData = await tailorRes.json();
       if (!tailorRes.ok || !tailorData.success || !tailorData.result) {
         throw new Error(tailorData.error || 'Failed to tailor resume and cover letter.');
@@ -408,16 +387,15 @@ export default function App() {
       // Step 5: Map ATS Form Fields
       setPipelinePhase(`Step 3/3 · Mapping ATS application form fields...`);
       addLog('MAPPING_FORM', 'Mapping candidate profile details onto ATS form inputs...', 'thought');
-      const formRes = await fetch('/api/agent/map-form-fields', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
+      const formRes = await agentFetch(
+        '/api/agent/map-form-fields',
+        {
           userProfile,
           jobListing: jobToProcess,
           tailoredCoverLetter: tailoredResult.tailoredCoverLetter,
-          llmConfig,
-        }),
-      });
+        },
+        llmConfig
+      );
       const formData = await formRes.json();
       if (!formRes.ok || !formData.success) {
         throw new Error(formData.error || 'Failed to map ATS form fields.');
@@ -473,6 +451,31 @@ export default function App() {
     setDiscoveredJobs((prev) => prev.filter((j) => j.id !== jobId));
   };
 
+  const isActiveProviderConnected =
+    Boolean(providerAvailability?.[llmConfig.provider]) || hasClientProviderKey(llmConfig.provider);
+
+  const handleQuickOpenRouterConnect = async () => {
+    setIsConnectingOpenRouter(true);
+    setBannerConnectError(null);
+    setBlockedBannerAuthUrl(null);
+    try {
+      const { maskedHint } = await connectOpenRouterWithOAuth({
+        persistInBrowser: true,
+        onPopupBlocked: (url) => {
+          setBlockedBannerAuthUrl(url);
+        },
+      });
+      setBlockedBannerAuthUrl(null);
+      setLlmConfig({ provider: 'openrouter', model: 'openrouter/free' });
+      setCredentialVersion((v) => v + 1);
+      addLog('IDLE', `Connected OpenRouter account (${maskedHint}).`, 'success');
+    } catch (err: any) {
+      setBannerConnectError(err?.message || 'Could not complete OpenRouter sign-in.');
+    } finally {
+      setIsConnectingOpenRouter(false);
+    }
+  };
+
   return (
     <div className="min-h-screen bg-[#f8f9fb] dark:bg-zinc-950 text-zinc-900 dark:text-zinc-100 flex transition-colors">
       <SidebarNav
@@ -481,6 +484,7 @@ export default function App() {
         scheduleConfig={scheduleConfig}
         userProfile={userProfile}
         llmConfig={llmConfig}
+        isProviderConnected={providerAvailability === null ? undefined : isActiveProviderConnected}
         mobileOpen={mobileNavOpen}
         onCloseMobile={() => setMobileNavOpen(false)}
       />
@@ -500,6 +504,63 @@ export default function App() {
         />
 
         <main className="flex-1 max-w-[1200px] w-full mx-auto px-5 sm:px-8 lg:px-10 py-8 sm:py-10">
+          {providerAvailability !== null && !isActiveProviderConnected && activeTab !== 'settings' && (
+            <div className="mb-6 bg-amber-50 dark:bg-amber-950/30 border border-amber-200 dark:border-amber-900/70 rounded-2xl px-5 py-4 space-y-2 text-sm">
+              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+                <div className="flex items-start sm:items-center gap-3 text-amber-950 dark:text-amber-100">
+                  <KeyRound className="w-5 h-5 text-amber-600 dark:text-amber-400 shrink-0 mt-0.5 sm:mt-0" />
+                  <span>
+                    Sign in with <strong>OpenRouter</strong> in one click (supports free models, no API key pasting
+                    needed) or choose another AI provider in Settings.
+                  </span>
+                </div>
+                <div className="flex flex-wrap items-center gap-2 shrink-0 self-start sm:self-auto">
+                  <button
+                    type="button"
+                    onClick={handleQuickOpenRouterConnect}
+                    disabled={isConnectingOpenRouter}
+                    className="inline-flex items-center gap-1.5 px-4 py-2 rounded-xl bg-blue-600 hover:bg-blue-700 text-white font-semibold shadow-2xs transition-colors whitespace-nowrap disabled:opacity-60"
+                  >
+                    {isConnectingOpenRouter ? (
+                      <>
+                        <RefreshCw className="w-4 h-4 animate-spin" />
+                        <span>Connecting...</span>
+                      </>
+                    ) : (
+                      <>
+                        <ExternalLink className="w-4 h-4" />
+                        <span>Connect with OpenRouter</span>
+                      </>
+                    )}
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setActiveTab('settings')}
+                    className="inline-flex items-center justify-center px-4 py-2 rounded-xl bg-white dark:bg-zinc-900 border border-amber-300 dark:border-amber-800 text-amber-950 dark:text-amber-100 font-semibold hover:bg-amber-100/60 dark:hover:bg-amber-900/40 transition-colors whitespace-nowrap"
+                  >
+                    Settings
+                  </button>
+                </div>
+              </div>
+              {blockedBannerAuthUrl && (
+                <div className="text-xs font-medium text-amber-900 dark:text-amber-200 pl-8 flex flex-wrap items-center gap-2">
+                  <span>Popup was blocked by your browser:</span>
+                  <a
+                    href={blockedBannerAuthUrl}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="underline font-semibold text-blue-700 dark:text-blue-300"
+                  >
+                    Open OpenRouter Sign-In
+                  </a>
+                </div>
+              )}
+              {bannerConnectError && (
+                <div className="text-xs font-medium text-red-700 dark:text-red-300 pl-8">{bannerConnectError}</div>
+              )}
+            </div>
+          )}
+
           {activeTab === 'dashboard' && (
             <AgentDashboard
               discoveredJobs={discoveredJobs}
@@ -536,13 +597,10 @@ export default function App() {
               onRemoveJob={handleRemoveJob}
               onUpdateScreenedJobs={(screened) => {
                 setDiscoveredJobs(screened);
-                addLog(
-                  'EVALUATING_MATCH',
-                  `Batch-screened ${screened.length} openings using gemini-decision-1 (0 output tokens).`,
-                  'success'
-                );
+                addLog('EVALUATING_MATCH', `Calibrated fit scores for ${screened.length} openings.`, 'success');
               }}
               onGoToApplications={() => setActiveTab('applications')}
+              onOpenSettings={() => setActiveTab('settings')}
             />
           )}
 
@@ -574,6 +632,7 @@ export default function App() {
               onChangeLlmConfig={setLlmConfig}
               providerAvailability={providerAvailability}
               onRefreshProviders={refreshProviderAvailability}
+              onCredentialChange={() => setCredentialVersion((v) => v + 1)}
             />
           )}
         </main>

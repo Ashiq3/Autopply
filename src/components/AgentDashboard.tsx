@@ -130,7 +130,7 @@ export const AgentDashboard: React.FC<AgentDashboardProps> = ({
       statusText: isAgentRunning ? 'Running pipeline...' : `${pendingJobsCount} pending`,
       isDone: hasRealApplications,
       description:
-        'Click Prepare Package on any opening to calibrate job fit with Decision AI, resolve the career portal, tailor your CV & cover letter without fabrication, and map ATS answers.',
+        'Click Prepare Package on any opening to calibrate job fit, resolve the career portal, tailor your CV & cover letter without fabrication, and map ATS answers.',
       ctaLabel: isAgentRunning ? 'Preparing...' : 'Prepare Next App',
       action: onRunAgent,
       disabled: isAgentRunning,
@@ -151,7 +151,7 @@ export const AgentDashboard: React.FC<AgentDashboardProps> = ({
       statusText: llmConfig ? `${llmConfig.provider} active` : 'Model settings',
       isDone: false,
       description:
-        'Switch between Google Gemini, OpenRouter, OpenAI, and Claude models, exclude companies, adjust minimum match thresholds, and trigger saved search presets.',
+        'Connect OpenRouter, OpenAI, Claude, Groq, DeepSeek, Mistral, Together, or any OpenAI-compatible AI provider, exclude companies, adjust match thresholds, and trigger saved search presets.',
       ctaLabel: 'Open Settings',
       action: () => onNavigateTab('settings'),
     },
@@ -202,7 +202,7 @@ export const AgentDashboard: React.FC<AgentDashboardProps> = ({
           </div>
 
           <div className="text-sm text-zinc-500 dark:text-zinc-400">
-            Stored locally in your browser · No account required · Server-side AI keys
+            Stored locally in your browser · No account required · Use your own OpenRouter or third-party AI key
           </div>
         </div>
 

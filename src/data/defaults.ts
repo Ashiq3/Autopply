@@ -67,7 +67,7 @@ export const DEFAULT_USER_PROFILE: UserProfile = {
       id: 'prj_1',
       name: 'AutoApply AI — Autonomous Job Search Agent',
       description: 'Full-stack AI agent that searches live web job boards, runs ATS compatibility audits, and generates tailored PDF resumes.',
-      techStack: ['React', 'TypeScript', 'Express', 'Google Gemini API', 'Tailwind CSS'],
+      techStack: ['React', 'TypeScript', 'Express', 'OpenRouter API', 'Tailwind CSS'],
       link: 'https://github.com/alexmorgan-dev/autoapply-ai'
     },
     {
@@ -105,7 +105,7 @@ Entry-level **Full-Stack Software Engineer** with hands-on experience building p
 ### TECHNICAL SKILLS
 - **Frontend:** React, TypeScript, JavaScript (ES2022), Tailwind CSS, HTML5/CSS3
 - **Backend & Data:** Node.js, Express, REST APIs, PostgreSQL, SQL
-- **AI & Tooling:** Google Gemini SDK, Git, GitHub Actions, Docker, Vite
+- **AI & Tooling:** OpenRouter / Multi-LLM SDK, Git, GitHub Actions, Docker, Vite
 
 ---
 
@@ -118,7 +118,7 @@ Entry-level **Full-Stack Software Engineer** with hands-on experience building p
 ---
 
 ### PROJECTS
-- **AutoApply AI**: Full-stack job search & ATS resume tailoring agent built with React, Express, and Gemini Search Grounding.
+- **AutoApply AI**: Full-stack job search & ATS resume tailoring agent built with React, Express, and Multi-Provider AI.
 - **SheetSync Lead Pipeline**: Automated Node.js data enrichment & webhook pipeline with PostgreSQL storage.
 
 ---
@@ -240,7 +240,7 @@ Qualifications:
     description: `OrbitFlow AI builds intelligent workflow agents for growing operations teams. We are seeking a builder who loves connecting APIs, LLMs, and clean web interfaces.
 
 Responsibilities:
-- Design reliable LLM-powered extraction and classification workflows using Gemini / OpenAI APIs.
+- Design reliable LLM-powered extraction and classification workflows using OpenRouter / OpenAI APIs.
 - Build TypeScript/Node.js backend connectors and lightweight React admin views.
 - Monitor prompt accuracy, latency, and API reliability.
 
@@ -377,37 +377,36 @@ export const GITHUB_OPEN_SOURCE_TOOLS: GitHubTool[] = [
 ];
 
 export const DEFAULT_LLM_CONFIG: LlmProviderConfig = {
-  provider: 'gemini',
-  model: 'gemini-3.1-flash-lite',
+  provider: 'openrouter',
+  model: 'openrouter/free',
 };
 
 export const LLM_PROVIDER_CATALOG: LlmProviderMetadata[] = [
   {
-    id: 'gemini',
-    name: 'Google Gemini',
-    envKeyName: 'GEMINI_API_KEY',
-    defaultModel: 'gemini-3.1-flash-lite',
-    supportsWebSearch: true,
-    description:
-      'Uses high-quota free-tier Gemini 3.1 Flash Lite for search & tailoring, paired with gemini-decision-1 for zero-token calibrated job scoring.',
-    models: [
-      { id: 'gemini-3.1-flash-lite', label: 'Gemini 3.1 Flash Lite', note: 'Highest free-tier quota (Default)' },
-      { id: 'gemini-4-hydrogen', label: 'Gemini 4 Hydrogen', note: 'Balanced (20 RPD free limit)' },
-      { id: 'gemini-4-neon', label: 'Gemini 4 Neon', note: 'Deep reasoning (Paid key)' },
-    ],
-  },
-  {
     id: 'openrouter',
     name: 'OpenRouter',
     envKeyName: 'OPENROUTER_API_KEY',
-    defaultModel: 'openai/gpt-4o-mini',
+    defaultModel: 'openrouter/free',
+    defaultBaseUrl: 'https://openrouter.ai/api/v1',
+    requiresApiKey: true,
     supportsWebSearch: true,
-    description: 'Routes across 100+ models via OpenRouter with web search plugin support.',
+    supportsDynamicModels: true,
+    apiKeyPlaceholder: 'sk-or-v1-...',
+    keyPortalUrl: 'https://openrouter.ai/keys',
+    keyPortalLabel: 'Get OpenRouter Key',
+    description:
+      'Access 300+ models (including free-tier models like Llama 3.3, DeepSeek, Qwen, plus Claude & GPT-4o) with one key.',
     models: [
+      { id: 'openrouter/free', label: 'Free Models Router', note: 'Auto-picks available free model', isFree: true },
+      {
+        id: 'meta-llama/llama-3.3-70b-instruct:free',
+        label: 'Llama 3.3 70B (Free)',
+        note: 'Free tier',
+        isFree: true,
+      },
+      { id: 'deepseek/deepseek-r1-0528:free', label: 'DeepSeek R1 (Free)', note: 'Free tier reasoning', isFree: true },
       { id: 'openai/gpt-4o-mini', label: 'OpenAI GPT-4o mini', note: 'Fast & affordable' },
       { id: 'anthropic/claude-3.5-sonnet', label: 'Claude 3.5 Sonnet', note: 'Strong writing & JSON' },
-      { id: 'google/gemini-2.5-flash', label: 'Gemini 2.5 Flash', note: 'Fast multimodal' },
-      { id: 'meta-llama/llama-3.3-70b-instruct:free', label: 'Llama 3.3 70B (Free)', note: 'Free tier' },
     ],
   },
   {
@@ -415,8 +414,14 @@ export const LLM_PROVIDER_CATALOG: LlmProviderMetadata[] = [
     name: 'OpenAI',
     envKeyName: 'OPENAI_API_KEY',
     defaultModel: 'gpt-4o-mini',
+    defaultBaseUrl: 'https://api.openai.com/v1',
+    requiresApiKey: true,
     supportsWebSearch: true,
-    description: 'Uses OpenAI Chat Completions and Responses API with live web_search_preview.',
+    supportsDynamicModels: true,
+    apiKeyPlaceholder: 'sk-proj-...',
+    keyPortalUrl: 'https://platform.openai.com/api-keys',
+    keyPortalLabel: 'Get OpenAI Key',
+    description: 'Uses OpenAI Chat Completions and Responses API with optional live web search.',
     models: [
       { id: 'gpt-4o-mini', label: 'GPT-4o mini', note: 'Fast & cost-efficient' },
       { id: 'gpt-4o', label: 'GPT-4o', note: 'High accuracy' },
@@ -429,12 +434,111 @@ export const LLM_PROVIDER_CATALOG: LlmProviderMetadata[] = [
     name: 'Claude (Anthropic)',
     envKeyName: 'ANTHROPIC_API_KEY',
     defaultModel: 'claude-3-5-haiku-latest',
+    defaultBaseUrl: 'https://api.anthropic.com/v1',
+    requiresApiKey: true,
     supportsWebSearch: true,
-    description: 'Uses Anthropic Messages API with native PDF parsing and web search.',
+    supportsDynamicModels: false,
+    apiKeyPlaceholder: 'sk-ant-api03-...',
+    keyPortalUrl: 'https://console.anthropic.com/settings/keys',
+    keyPortalLabel: 'Get Anthropic Key',
+    description: 'Uses Anthropic Messages API with native PDF parsing and web search support.',
     models: [
       { id: 'claude-3-5-haiku-latest', label: 'Claude 3.5 Haiku', note: 'Fast & economical' },
       { id: 'claude-3-5-sonnet-latest', label: 'Claude 3.5 Sonnet', note: 'Balanced reasoning' },
       { id: 'claude-sonnet-4-0', label: 'Claude Sonnet 4', note: 'High-precision tailoring' },
+    ],
+  },
+  {
+    id: 'groq',
+    name: 'Groq',
+    envKeyName: 'GROQ_API_KEY',
+    defaultModel: 'llama-3.3-70b-versatile',
+    defaultBaseUrl: 'https://api.groq.com/openai/v1',
+    requiresApiKey: true,
+    supportsWebSearch: false,
+    supportsDynamicModels: true,
+    apiKeyPlaceholder: 'gsk_...',
+    keyPortalUrl: 'https://console.groq.com/keys',
+    keyPortalLabel: 'Get Groq Key',
+    description: 'Ultra-fast inference for Llama, Qwen, and DeepSeek models with generous free tier.',
+    models: [
+      { id: 'llama-3.3-70b-versatile', label: 'Llama 3.3 70B Versatile', note: 'Balanced speed & quality' },
+      { id: 'llama-3.1-8b-instant', label: 'Llama 3.1 8B Instant', note: 'Fastest' },
+      { id: 'qwen-qwq-32b', label: 'Qwen QwQ 32B', note: 'Reasoning' },
+    ],
+  },
+  {
+    id: 'deepseek',
+    name: 'DeepSeek',
+    envKeyName: 'DEEPSEEK_API_KEY',
+    defaultModel: 'deepseek-chat',
+    defaultBaseUrl: 'https://api.deepseek.com/v1',
+    requiresApiKey: true,
+    supportsWebSearch: false,
+    supportsDynamicModels: false,
+    apiKeyPlaceholder: 'sk-...',
+    keyPortalUrl: 'https://platform.deepseek.com/api_keys',
+    keyPortalLabel: 'Get DeepSeek Key',
+    description: 'Direct DeepSeek API for DeepSeek-V3 chat and DeepSeek-R1 reasoning.',
+    models: [
+      { id: 'deepseek-chat', label: 'DeepSeek Chat (V3)', note: 'Fast & low-cost' },
+      { id: 'deepseek-reasoner', label: 'DeepSeek Reasoner (R1)', note: 'Deep reasoning' },
+    ],
+  },
+  {
+    id: 'together',
+    name: 'Together AI',
+    envKeyName: 'TOGETHER_API_KEY',
+    defaultModel: 'meta-llama/Llama-3.3-70B-Instruct-Turbo',
+    defaultBaseUrl: 'https://api.together.xyz/v1',
+    requiresApiKey: true,
+    supportsWebSearch: false,
+    supportsDynamicModels: true,
+    apiKeyPlaceholder: 'tgp_v1_...',
+    keyPortalUrl: 'https://api.together.ai/settings/api-keys',
+    keyPortalLabel: 'Get Together Key',
+    description: 'Fast cloud inference for Llama, Qwen, DeepSeek, and open-weight models.',
+    models: [
+      { id: 'meta-llama/Llama-3.3-70B-Instruct-Turbo', label: 'Llama 3.3 70B Turbo', note: 'Recommended' },
+      { id: 'Qwen/Qwen2.5-72B-Instruct-Turbo', label: 'Qwen 2.5 72B Turbo', note: 'Strong JSON & extraction' },
+      { id: 'deepseek-ai/DeepSeek-V3', label: 'DeepSeek V3', note: 'High quality' },
+    ],
+  },
+  {
+    id: 'mistral',
+    name: 'Mistral AI',
+    envKeyName: 'MISTRAL_API_KEY',
+    defaultModel: 'mistral-small-latest',
+    defaultBaseUrl: 'https://api.mistral.ai/v1',
+    requiresApiKey: true,
+    supportsWebSearch: false,
+    supportsDynamicModels: true,
+    apiKeyPlaceholder: '...',
+    keyPortalUrl: 'https://console.mistral.ai/api-keys',
+    keyPortalLabel: 'Get Mistral Key',
+    description: 'Official Mistral AI platform with Mistral Small, Large, and Codestral models.',
+    models: [
+      { id: 'mistral-small-latest', label: 'Mistral Small', note: 'Fast & economical' },
+      { id: 'mistral-large-latest', label: 'Mistral Large', note: 'Flagship quality' },
+    ],
+  },
+  {
+    id: 'custom',
+    name: 'Custom (OpenAI-Compatible)',
+    envKeyName: 'CUSTOM_LLM_API_KEY',
+    defaultModel: 'gpt-4o-mini',
+    defaultBaseUrl: 'https://api.x.ai/v1',
+    requiresApiKey: false,
+    supportsWebSearch: false,
+    supportsDynamicModels: true,
+    apiKeyPlaceholder: 'Optional API key...',
+    keyPortalUrl: '',
+    keyPortalLabel: '',
+    description:
+      'Connect any HTTPS OpenAI-compatible provider (xAI Grok, Perplexity, Fireworks, LiteLLM, or self-hosted proxy).',
+    models: [
+      { id: 'grok-3-mini', label: 'xAI Grok 3 Mini', note: 'With https://api.x.ai/v1' },
+      { id: 'sonar', label: 'Perplexity Sonar', note: 'With https://api.perplexity.ai' },
     ],
   },
 ];
