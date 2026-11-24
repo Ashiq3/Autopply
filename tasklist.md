@@ -4,7 +4,7 @@ Incremental, production-focused improvements for **Autopply** (`Ashiq3/Autopply`
 **Rule:** Complete 1 focused task per scheduled run to keep changes clean, atomic, and meaningful.
 
 ## Documentation & Repo Hygiene
-- [ ] Add `CHANGELOG.md` following Keep a Changelog format for version tracking
+- [x] Add `CHANGELOG.md` following Keep a Changelog format for version tracking (2026-11-24)
 - [ ] Add `SECURITY.md` with responsible vulnerability disclosure and API key safety guidelines
 - [ ] Add `docs/architecture.md` documenting the `server.ts` API endpoints and `src/App.tsx` frontend flow
 - [ ] Add `.github/ISSUE_TEMPLATE/bug_report.md` and feature request template
