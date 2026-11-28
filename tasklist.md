@@ -6,7 +6,7 @@ Incremental, production-focused improvements for **Autopply** (`Ashiq3/Autopply`
 ## Documentation & Repo Hygiene
 - [x] Add `CHANGELOG.md` following Keep a Changelog format for version tracking (2026-11-24)
 - [x] Add `SECURITY.md` with responsible vulnerability disclosure and API key safety guidelines (2026-11-26)
-- [ ] Add `docs/architecture.md` documenting the `server.ts` API endpoints and `src/App.tsx` frontend flow
+- [x] Add `docs/architecture.md` documenting the `server.ts` API endpoints and `src/App.tsx` frontend flow (2026-11-28)
 - [ ] Add `.github/ISSUE_TEMPLATE/bug_report.md` and feature request template
 - [ ] Add `.github/PULL_REQUEST_TEMPLATE.md` with a concise PR verification checklist
 - [ ] Review and document all environment variables in `.env.example` with clear comments
